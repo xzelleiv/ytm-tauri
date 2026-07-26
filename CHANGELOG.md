@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8 - 2026-07-26
+
+### Fixes
+
+- Fixed Google sign-in looping and opening Chrome when the regional `accounts.google.com.sg` handoff was rejected; the login flow now stays inside the WebView.
+
 ## 0.1.7 - 2026-07-24
 
 ### Fixes

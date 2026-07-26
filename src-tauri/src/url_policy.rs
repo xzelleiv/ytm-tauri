@@ -46,6 +46,7 @@ fn is_allowed_navigation_host(host: &str) -> bool {
     host_matches_domain(host, "youtube.com")
         || host_matches_domain(host, "google.com")
         || host_matches_domain(host, "google.co.id")
+        || host_matches_domain(host, "google.com.sg")
         || host_matches_domain(host, "googleapis.com")
         || host_matches_domain(host, "gstatic.com")
         || host_matches_domain(host, "googleusercontent.com")
@@ -90,6 +91,9 @@ mod tests {
             "https://accounts.google.co.id/signin"
         )));
         assert!(is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.com.sg/accounts/SetSID"
+        )));
+        assert!(is_allowed_navigation_url(&parse_url(
             "https://accounts.youtube.com/"
         )));
         assert!(is_allowed_navigation_url(&parse_url(
@@ -116,6 +120,9 @@ mod tests {
         )));
         assert!(!is_allowed_navigation_url(&parse_url(
             "https://music.youtube.com.example.com/"
+        )));
+        assert!(!is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.com.sg.example.com/"
         )));
     }
 

@@ -13,15 +13,15 @@ This app gives YouTube Music its own dedicated Windows window, keeps your normal
 
 - Windows only.
 - Unofficial project, not affiliated with YouTube, Google, Discord, Microsoft, or Tauri.
-- Current release: [`v0.1.7`](https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.7).
+- Current release: [`v0.1.8`](https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.8).
 
 ## Download
 
 Use the NSIS setup installer for normal installs:
 
-[Download `YouTube.Music_0.1.7_x64-setup.exe`](https://github.com/justhenix/yt-music-unofficial/releases/download/v0.1.7/YouTube.Music_0.1.7_x64-setup.exe)
+[Download `YouTube.Music_0.1.8_x64-setup.exe`](https://github.com/justhenix/yt-music-unofficial/releases/download/v0.1.8/YouTube.Music_0.1.8_x64-setup.exe)
 
-An MSI package is also available on the [release page](https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.7).
+An MSI package is also available on the [release page](https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.8).
 
 > Windows may show an “Unknown publisher” notice because this community release is not code-signed.
 
