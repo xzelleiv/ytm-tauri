@@ -5,6 +5,230 @@ use tauri::Url;
 
 const MAX_DISCORD_URL_LEN: usize = 512;
 
+// Google-owned regional domains mirrored from Chromium's kGoogleConfigs.
+// Keep this list sorted so binary_search remains valid.
+const GOOGLE_REGIONAL_DOMAINS: &[&str] = &[
+    "google.ac",
+    "google.ad",
+    "google.ae",
+    "google.af",
+    "google.ag",
+    "google.al",
+    "google.am",
+    "google.as",
+    "google.at",
+    "google.az",
+    "google.ba",
+    "google.be",
+    "google.bf",
+    "google.bg",
+    "google.bi",
+    "google.bj",
+    "google.bs",
+    "google.bt",
+    "google.by",
+    "google.ca",
+    "google.cc",
+    "google.cd",
+    "google.cf",
+    "google.cg",
+    "google.ch",
+    "google.ci",
+    "google.cl",
+    "google.cm",
+    "google.cn",
+    "google.co.ao",
+    "google.co.bw",
+    "google.co.ck",
+    "google.co.cr",
+    "google.co.hu",
+    "google.co.id",
+    "google.co.il",
+    "google.co.im",
+    "google.co.in",
+    "google.co.je",
+    "google.co.jp",
+    "google.co.ke",
+    "google.co.kr",
+    "google.co.ls",
+    "google.co.ma",
+    "google.co.mz",
+    "google.co.nz",
+    "google.co.th",
+    "google.co.tz",
+    "google.co.ug",
+    "google.co.uk",
+    "google.co.uz",
+    "google.co.ve",
+    "google.co.vi",
+    "google.co.za",
+    "google.co.zm",
+    "google.co.zw",
+    "google.com.af",
+    "google.com.ag",
+    "google.com.ai",
+    "google.com.ar",
+    "google.com.au",
+    "google.com.bd",
+    "google.com.bh",
+    "google.com.bn",
+    "google.com.bo",
+    "google.com.br",
+    "google.com.by",
+    "google.com.bz",
+    "google.com.cn",
+    "google.com.co",
+    "google.com.cu",
+    "google.com.cy",
+    "google.com.do",
+    "google.com.ec",
+    "google.com.eg",
+    "google.com.et",
+    "google.com.fj",
+    "google.com.ge",
+    "google.com.gh",
+    "google.com.gi",
+    "google.com.gr",
+    "google.com.gt",
+    "google.com.hk",
+    "google.com.iq",
+    "google.com.jm",
+    "google.com.jo",
+    "google.com.kh",
+    "google.com.kw",
+    "google.com.lb",
+    "google.com.ly",
+    "google.com.mm",
+    "google.com.mt",
+    "google.com.mx",
+    "google.com.my",
+    "google.com.na",
+    "google.com.nf",
+    "google.com.ng",
+    "google.com.ni",
+    "google.com.np",
+    "google.com.nr",
+    "google.com.om",
+    "google.com.pa",
+    "google.com.pe",
+    "google.com.pg",
+    "google.com.ph",
+    "google.com.pk",
+    "google.com.pl",
+    "google.com.pr",
+    "google.com.py",
+    "google.com.qa",
+    "google.com.ru",
+    "google.com.sa",
+    "google.com.sb",
+    "google.com.sg",
+    "google.com.sl",
+    "google.com.sv",
+    "google.com.tj",
+    "google.com.tn",
+    "google.com.tr",
+    "google.com.tw",
+    "google.com.ua",
+    "google.com.uy",
+    "google.com.vc",
+    "google.com.ve",
+    "google.com.vn",
+    "google.cv",
+    "google.cz",
+    "google.de",
+    "google.dj",
+    "google.dk",
+    "google.dm",
+    "google.dz",
+    "google.ee",
+    "google.es",
+    "google.fi",
+    "google.fm",
+    "google.fr",
+    "google.ga",
+    "google.ge",
+    "google.gg",
+    "google.gl",
+    "google.gm",
+    "google.gp",
+    "google.gr",
+    "google.gy",
+    "google.hk",
+    "google.hn",
+    "google.hr",
+    "google.ht",
+    "google.hu",
+    "google.ie",
+    "google.im",
+    "google.iq",
+    "google.ir",
+    "google.is",
+    "google.it",
+    "google.it.ao",
+    "google.je",
+    "google.jo",
+    "google.jp",
+    "google.kg",
+    "google.ki",
+    "google.kz",
+    "google.la",
+    "google.li",
+    "google.lk",
+    "google.lt",
+    "google.lu",
+    "google.lv",
+    "google.md",
+    "google.me",
+    "google.mg",
+    "google.mk",
+    "google.ml",
+    "google.mn",
+    "google.ms",
+    "google.mu",
+    "google.mv",
+    "google.mw",
+    "google.ne",
+    "google.ne.jp",
+    "google.ng",
+    "google.nl",
+    "google.no",
+    "google.nr",
+    "google.nu",
+    "google.off.ai",
+    "google.pk",
+    "google.pl",
+    "google.pn",
+    "google.ps",
+    "google.pt",
+    "google.ro",
+    "google.rs",
+    "google.ru",
+    "google.rw",
+    "google.sc",
+    "google.se",
+    "google.sh",
+    "google.si",
+    "google.sk",
+    "google.sm",
+    "google.sn",
+    "google.so",
+    "google.sr",
+    "google.st",
+    "google.td",
+    "google.tg",
+    "google.tk",
+    "google.tl",
+    "google.tm",
+    "google.tn",
+    "google.to",
+    "google.tt",
+    "google.us",
+    "google.uz",
+    "google.vg",
+    "google.vu",
+    "google.ws",
+];
+
 pub fn is_allowed_navigation_url(url: &Url) -> bool {
     match url.scheme() {
         "about" => url.as_str() == "about:blank",
@@ -45,11 +269,18 @@ fn valid_discord_url(value: Option<&str>, is_allowed_host: fn(&str) -> bool) -> 
 fn is_allowed_navigation_host(host: &str) -> bool {
     host_matches_domain(host, "youtube.com")
         || host_matches_domain(host, "google.com")
-        || host_matches_domain(host, "google.co.id")
-        || host_matches_domain(host, "google.com.sg")
+        || is_regional_google_accounts_host(host)
         || host_matches_domain(host, "googleapis.com")
         || host_matches_domain(host, "gstatic.com")
         || host_matches_domain(host, "googleusercontent.com")
+}
+
+fn is_regional_google_accounts_host(host: &str) -> bool {
+    let Some(domain) = host.strip_prefix("accounts.") else {
+        return false;
+    };
+
+    GOOGLE_REGIONAL_DOMAINS.binary_search(&domain).is_ok()
 }
 
 fn is_allowed_track_host(host: &str) -> bool {
@@ -94,6 +325,15 @@ mod tests {
             "https://accounts.google.com.sg/accounts/SetSID"
         )));
         assert!(is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.com.ph/accounts/SetSID"
+        )));
+        assert!(is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.co.uk/signin"
+        )));
+        assert!(is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.de/signin"
+        )));
+        assert!(is_allowed_navigation_url(&parse_url(
             "https://accounts.youtube.com/"
         )));
         assert!(is_allowed_navigation_url(&parse_url(
@@ -124,6 +364,25 @@ mod tests {
         assert!(!is_allowed_navigation_url(&parse_url(
             "https://accounts.google.com.sg.example.com/"
         )));
+        assert!(!is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.example.ph/"
+        )));
+        assert!(!is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.com.example/"
+        )));
+        assert!(!is_allowed_navigation_url(&parse_url(
+            "https://accounts.google.zz/"
+        )));
+        assert!(!is_allowed_navigation_url(&parse_url(
+            "https://www.google.de/"
+        )));
+    }
+
+    #[test]
+    fn regional_google_domains_stay_sorted() {
+        assert!(GOOGLE_REGIONAL_DOMAINS
+            .windows(2)
+            .all(|domains| domains[0] < domains[1]));
     }
 
     #[test]
