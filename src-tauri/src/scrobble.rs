@@ -76,7 +76,9 @@ fn update_track(
 ) {
     let key = track_key(&track);
     let now = Instant::now();
-    let is_new = current.as_ref().is_none_or(|value| value.key != key);
+    let is_new = current
+        .as_ref()
+        .map_or(true, |value| value.key != key);
 
     if is_new {
         let elapsed = track.elapsed_seconds.unwrap_or(0);
@@ -152,7 +154,11 @@ fn should_scrobble(track: &TrackMetadata, listened: Duration) -> bool {
     listened.as_secs() >= threshold
 }
 
-fn send_lastfm_now_playing(client: &Client, settings: &settings::Settings, track: &TrackMetadata) -> bool {
+fn send_lastfm_now_playing(
+    client: &Client,
+    settings: &settings::Settings,
+    track: &TrackMetadata,
+) -> bool {
     let Some((api_key, secret, session_key)) = lastfm_credentials(settings) else {
         return false;
     };
@@ -257,12 +263,15 @@ fn send_listenbrainz(
         listen["listened_at"] = json!(timestamp);
     }
 
-    client
+    match client
         .post(LISTENBRAINZ_API_ROOT)
         .header("Authorization", format!("Token {token}"))
         .json(&json!({ "listen_type": listen_type, "payload": [listen] }))
         .send()
-        .is_ok_and(|response| response.status().is_success())
+    {
+        Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
 }
 
 fn lastfm_credentials(settings: &settings::Settings) -> Option<(String, String, String)> {
@@ -338,10 +347,7 @@ mod tests {
             ("track".to_string(), "Song".to_string()),
             ("artist".to_string(), "Artist".to_string()),
         ]);
-        let expected = format!(
-            "{:x}",
-            md5::compute(b"artistArtisttrackSongsecret")
-        );
+        let expected = format!("{:x}", md5::compute(b"artistArtisttrackSongsecret"));
         assert_eq!(lastfm_signature(&params, "secret"), expected);
     }
 }
