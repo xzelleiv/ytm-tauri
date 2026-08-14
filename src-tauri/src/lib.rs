@@ -23,7 +23,16 @@ use url_policy::{is_allowed_navigation_url, is_youtube_music_url};
 const YOUTUBE_MUSIC_URL: &str = "https://music.youtube.com";
 const AD_BLOCK_SCRIPT: &str = include_str!("adblock_probe.js");
 const FEATURE_PROBE_SCRIPT: &str = include_str!("feature_probe.js");
+const AUDIO_ENGINE_SCRIPT: &str = include_str!("audio_engine_probe.js");
 const SYNCED_LYRICS_SCRIPT: &str = include_str!("synced_lyrics_probe.js");
+const OUTPUT_DEVICE_SCRIPT: &str = include_str!("output_device_probe.js");
+const EQUALIZER_SCRIPT: &str = include_str!("equalizer_probe.js");
+const PRECISE_VOLUME_SCRIPT: &str = include_str!("precise_volume_probe.js");
+const EXPONENTIAL_VOLUME_SCRIPT: &str = include_str!("exponential_volume_probe.js");
+const PLAYBACK_SPEED_SCRIPT: &str = include_str!("playback_speed_probe.js");
+const SKIP_DISLIKED_SCRIPT: &str = include_str!("skip_disliked_probe.js");
+const NAVIGATION_SCRIPT: &str = include_str!("navigation_probe.js");
+const ALBUM_COLOR_THEME_SCRIPT: &str = include_str!("album_color_theme_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,14 +219,17 @@ fn initialization_script(settings: &settings::Settings) -> String {
         "window.__ytmFeatureConfig = {};",
         page_feature_config(settings)
     );
+    let page_features = format!(
+        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{ALBUM_COLOR_THEME_SCRIPT}"
+    );
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
         format!(
-            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
         )
     } else {
         format!(
-            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{TRACK_PROBE_SCRIPT}"
         )
     }
 }
