@@ -1,6 +1,6 @@
-use crate::{controls, presence::TrackMetadata, settings, settings::SharedSettings};
+use crate::{presence::TrackMetadata, settings, settings::SharedSettings};
 use std::sync::OnceLock;
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewWindow};
 use windows::{
     core::Result as WindowsResult,
     Win32::{
@@ -68,9 +68,9 @@ unsafe extern "system" fn subclass_proc(
         if notification == THBN_CLICKED {
             if let Some(app) = APP.get() {
                 match button_id {
-                    PREVIOUS_BUTTON => controls::media_action(app, "previous"),
-                    PLAY_PAUSE_BUTTON => controls::media_action(app, "play_pause"),
-                    NEXT_BUTTON => controls::media_action(app, "next"),
+                    PREVIOUS_BUTTON => media_action(app, "previous"),
+                    PLAY_PAUSE_BUTTON => media_action(app, "play_pause"),
+                    NEXT_BUTTON => media_action(app, "next"),
                     _ => {}
                 }
             }
@@ -79,6 +79,25 @@ unsafe extern "system" fn subclass_proc(
     }
 
     DefSubclassProc(hwnd, message, wparam, lparam)
+}
+
+fn media_action(app: &AppHandle, action: &str) {
+    let script = match action {
+        "previous" => {
+            "(() => { const button = document.querySelector('ytmusic-player-bar #previous-button, ytmusic-player-bar #previous-song-button, ytmusic-player-bar .previous-button, ytmusic-player-bar [aria-label^=\"Previous\"]'); if (button) button.click(); else { const media = document.querySelector('video, audio'); if (media) media.currentTime = 0; } })();"
+        }
+        "play_pause" => {
+            "(() => { const media = document.querySelector('video, audio'); if (media) media.paused ? media.play() : media.pause(); else document.querySelector('ytmusic-player-bar #play-pause-button, ytmusic-player-bar .play-pause-button')?.click(); })();"
+        }
+        "next" => {
+            "(() => { const button = document.querySelector('ytmusic-player-bar #next-button, ytmusic-player-bar #next-song-button, ytmusic-player-bar .next-button, ytmusic-player-bar [aria-label^=\"Next\"]'); if (button) button.click(); else { const media = document.querySelector('video, audio'); if (media && Number.isFinite(media.duration)) media.currentTime = media.duration; } })();"
+        }
+        _ => return,
+    };
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval(script);
+    }
 }
 
 fn update_buttons(hwnd: HWND, track: Option<&TrackMetadata>) {
