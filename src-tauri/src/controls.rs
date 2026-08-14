@@ -5,9 +5,12 @@ use crate::{
     settings::{self, SharedSettings},
     updates,
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tauri::{
     menu::{
@@ -38,6 +41,19 @@ const RESET_SESSION_ID: &str = "reset_session";
 const CHECK_UPDATES_ID: &str = "check_updates";
 const TRAY_SHOW_ID: &str = "tray_show";
 const TRAY_QUIT_ID: &str = "tray_quit";
+const SYNCED_LYRICS_ID: &str = "feature_synced_lyrics";
+const LASTFM_SCROBBLING_ID: &str = "feature_lastfm_scrobbling";
+const LISTENBRAINZ_SCROBBLING_ID: &str = "feature_listenbrainz_scrobbling";
+const NOTIFICATIONS_ID: &str = "feature_notifications";
+const WINDOWS_MEDIA_CONTROLS_ID: &str = "feature_windows_media_controls";
+const CUSTOM_OUTPUT_DEVICE_ID: &str = "feature_custom_output_device";
+const EQUALIZER_ID: &str = "feature_equalizer";
+const PRECISE_VOLUME_ID: &str = "feature_precise_volume";
+const EXPONENTIAL_VOLUME_ID: &str = "feature_exponential_volume";
+const NAVIGATION_CONTROLS_ID: &str = "feature_navigation_controls";
+const PLAYBACK_SPEED_ID: &str = "feature_playback_speed";
+const SKIP_DISLIKED_ID: &str = "feature_skip_disliked";
+const ALBUM_COLOR_THEME_ID: &str = "feature_album_color_theme";
 const LOCAL_SHORTCUTS: [(&str, &str); 5] = [
     ("Ctrl+R", RELOAD_ID),
     ("Ctrl+=", ZOOM_IN_ID),
@@ -66,6 +82,7 @@ struct ShellUi {
     close_to_tray: CheckMenuItem<tauri::Wry>,
     startup: CheckMenuItem<tauri::Wry>,
     start_minimized: CheckMenuItem<tauri::Wry>,
+    feature_items: HashMap<&'static str, CheckMenuItem<tauri::Wry>>,
 }
 
 pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
@@ -207,6 +224,117 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         .item(&start_minimized)
         .build()?;
 
+    let synced_lyrics = feature_item(app, SYNCED_LYRICS_ID, "Synced Lyrics", initial.synced_lyrics)?;
+    let lastfm = feature_item(
+        app,
+        LASTFM_SCROBBLING_ID,
+        "Last.fm",
+        initial.lastfm_scrobbling,
+    )?;
+    let listenbrainz = feature_item(
+        app,
+        LISTENBRAINZ_SCROBBLING_ID,
+        "ListenBrainz",
+        initial.listenbrainz_scrobbling,
+    )?;
+    let notifications = feature_item(app, NOTIFICATIONS_ID, "Notifications", initial.notifications)?;
+    let windows_media = feature_item(
+        app,
+        WINDOWS_MEDIA_CONTROLS_ID,
+        "Windows Media Controls",
+        initial.windows_media_controls,
+    )?;
+    let output = feature_item(
+        app,
+        CUSTOM_OUTPUT_DEVICE_ID,
+        "Custom Output Device",
+        initial.custom_output_device,
+    )?;
+    let equalizer = feature_item(app, EQUALIZER_ID, "Equalizer", initial.equalizer)?;
+    let precise_volume = feature_item(
+        app,
+        PRECISE_VOLUME_ID,
+        "Precise Volume",
+        initial.precise_volume,
+    )?;
+    let exponential_volume = feature_item(
+        app,
+        EXPONENTIAL_VOLUME_ID,
+        "Exponential Volume",
+        initial.exponential_volume,
+    )?;
+    let playback_speed = feature_item(
+        app,
+        PLAYBACK_SPEED_ID,
+        "Playback Speed",
+        initial.playback_speed,
+    )?;
+    let navigation = feature_item(
+        app,
+        NAVIGATION_CONTROLS_ID,
+        "Navigation Controls",
+        initial.navigation_controls,
+    )?;
+    let album_theme = feature_item(
+        app,
+        ALBUM_COLOR_THEME_ID,
+        "Album Color Theme",
+        initial.album_color_theme,
+    )?;
+    let skip_disliked = feature_item(
+        app,
+        SKIP_DISLIKED_ID,
+        "Skip Disliked Songs",
+        initial.skip_disliked,
+    )?;
+
+    let scrobbling = SubmenuBuilder::new(app, "Scrobbling")
+        .item(&lastfm)
+        .item(&listenbrainz)
+        .build()?;
+    let desktop = SubmenuBuilder::new(app, "Desktop")
+        .item(&notifications)
+        .item(&windows_media)
+        .build()?;
+    let audio = SubmenuBuilder::new(app, "Audio")
+        .item(&output)
+        .item(&equalizer)
+        .item(&precise_volume)
+        .item(&exponential_volume)
+        .item(&playback_speed)
+        .build()?;
+    let interface = SubmenuBuilder::new(app, "Interface")
+        .item(&navigation)
+        .item(&album_theme)
+        .build()?;
+    let playback_features = SubmenuBuilder::new(app, "Playback")
+        .item(&skip_disliked)
+        .build()?;
+    let features = SubmenuBuilder::new(app, "Features")
+        .item(&synced_lyrics)
+        .item(&scrobbling)
+        .item(&desktop)
+        .item(&audio)
+        .item(&interface)
+        .item(&playback_features)
+        .build()?;
+
+    let feature_items = HashMap::from([
+        (SYNCED_LYRICS_ID, synced_lyrics),
+        (LASTFM_SCROBBLING_ID, lastfm),
+        (LISTENBRAINZ_SCROBBLING_ID, listenbrainz),
+        (NOTIFICATIONS_ID, notifications),
+        (WINDOWS_MEDIA_CONTROLS_ID, windows_media),
+        (CUSTOM_OUTPUT_DEVICE_ID, output),
+        (EQUALIZER_ID, equalizer),
+        (PRECISE_VOLUME_ID, precise_volume),
+        (EXPONENTIAL_VOLUME_ID, exponential_volume),
+        (PLAYBACK_SPEED_ID, playback_speed),
+        (NAVIGATION_CONTROLS_ID, navigation),
+        (ALBUM_COLOR_THEME_ID, album_theme),
+        (SKIP_DISLIKED_ID, skip_disliked),
+    ]);
+
     let clear_cache =
         MenuItemBuilder::with_id(CLEAR_CACHE_ID, "Clear Cache and Reload").build(app)?;
     let reset_session = MenuItemBuilder::with_id(RESET_SESSION_ID, "Reset Session").build(app)?;
@@ -230,6 +358,7 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         .item(&playback)
         .item(&view)
         .item(&settings_menu)
+        .item(&features)
         .item(&tools)
         .item(&separator_two)
         .item(&quit)
@@ -253,10 +382,26 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         close_to_tray,
         startup,
         start_minimized,
+        feature_items,
     })
 }
 
+fn feature_item(
+    app: &App,
+    id: &'static str,
+    label: &str,
+    checked: bool,
+) -> tauri::Result<CheckMenuItem<tauri::Wry>> {
+    CheckMenuItemBuilder::with_id(id, label)
+        .checked(checked)
+        .build(app)
+}
+
 fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellUi) {
+    if handle_feature_event(app, id, state, shell) {
+        return;
+    }
+
     match id {
         PREVIOUS_ID | PLAY_PAUSE_ID | NEXT_ID => media_action(app, id),
         RELOAD_ID => {
@@ -311,6 +456,42 @@ fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellU
         }
         _ => {}
     }
+}
+
+fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellUi) -> bool {
+    let Some(item) = shell.feature_items.get(id) else {
+        return false;
+    };
+    let enabled = item.is_checked().unwrap_or(false);
+
+    settings::update(&state.settings, |value| match id {
+        SYNCED_LYRICS_ID => value.synced_lyrics = enabled,
+        LASTFM_SCROBBLING_ID => value.lastfm_scrobbling = enabled,
+        LISTENBRAINZ_SCROBBLING_ID => value.listenbrainz_scrobbling = enabled,
+        NOTIFICATIONS_ID => value.notifications = enabled,
+        WINDOWS_MEDIA_CONTROLS_ID => value.windows_media_controls = enabled,
+        CUSTOM_OUTPUT_DEVICE_ID => value.custom_output_device = enabled,
+        EQUALIZER_ID => value.equalizer = enabled,
+        PRECISE_VOLUME_ID => value.precise_volume = enabled,
+        EXPONENTIAL_VOLUME_ID => value.exponential_volume = enabled,
+        NAVIGATION_CONTROLS_ID => value.navigation_controls = enabled,
+        PLAYBACK_SPEED_ID => value.playback_speed = enabled,
+        SKIP_DISLIKED_ID => value.skip_disliked = enabled,
+        ALBUM_COLOR_THEME_ID => value.album_color_theme = enabled,
+        _ => {}
+    });
+    sync_page_features(app, state);
+    true
+}
+
+fn sync_page_features(app: &AppHandle, state: &AppState) {
+    let config = crate::page_feature_config(&settings::snapshot(&state.settings));
+    eval_main(
+        app,
+        &format!(
+            "window.__ytmFeatureConfig = {config}; window.__ytmFeatures?.configure(window.__ytmFeatureConfig);"
+        ),
+    );
 }
 
 fn handle_local_shortcut(app: &AppHandle, action: &str, state: &AppState) {
