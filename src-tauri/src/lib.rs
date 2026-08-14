@@ -2,6 +2,7 @@
 
 mod adblock;
 mod controls;
+mod feature_bridge;
 mod platform;
 mod presence;
 mod settings;
@@ -145,6 +146,13 @@ pub fn run() {
                     NewWindowResponse::Deny
                 })
                 .on_document_title_changed(move |window, title| {
+                    if feature_bridge::is_feature_title_message(&title) {
+                        if window.url().ok().as_ref().is_some_and(is_youtube_music_url) {
+                            feature_bridge::handle_title(&window, &title);
+                        }
+                        return;
+                    }
+
                     // track_probe.js sends JSON through document.title so the remote
                     // YouTube page never gets direct access to Tauri commands.
                     if presence::is_presence_title_message(&title) {
