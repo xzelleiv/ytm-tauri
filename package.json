@@ -8,7 +8,10 @@
     "dev": "tauri dev",
     "build": "powershell -NoProfile -File scripts/build-windows.ps1",
     "build:unsigned": "tauri build",
-    "test": "node --test tests/*.test.mjs",
+    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test": "npm run test:js && npm run test:rust",
+    "test:js": "node --test tests/*.test.mjs",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
     "verify:windows": "powershell -NoProfile -File scripts/verify-windows-bundle.ps1"
   },

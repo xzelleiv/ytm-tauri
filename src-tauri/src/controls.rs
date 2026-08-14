@@ -1,7 +1,7 @@
 use crate::{
     adblock::{self, AdBlockController},
     platform,
-    presence::PresenceController,
+    presence::{PresenceController, TrackMetadata},
     settings::{self, SharedSettings},
     updates,
 };
@@ -11,10 +11,10 @@ use std::sync::{
 };
 use tauri::{
     menu::{
-        CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem,
-        SubmenuBuilder,
+        CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder,
+        PredefinedMenuItem, SubmenuBuilder,
     },
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     App, AppHandle, Manager,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -27,7 +27,6 @@ const ZOOM_IN_ID: &str = "zoom_in";
 const ZOOM_OUT_ID: &str = "zoom_out";
 const ZOOM_RESET_ID: &str = "zoom_reset";
 const DISCORD_RPC_ID: &str = "discord_rpc";
-const TRAY_DISCORD_RPC_ID: &str = "tray_discord_rpc";
 const DISCORD_STATUS_ID: &str = "discord_status";
 const AD_BLOCK_ID: &str = "ad_block";
 const AD_BLOCK_STATUS_ID: &str = "ad_block_status";
@@ -46,6 +45,8 @@ const LOCAL_SHORTCUTS: [(&str, &str); 5] = [
     ("Ctrl+0", ZOOM_RESET_ID),
     ("Ctrl+Shift+Delete", RESET_SESSION_ID),
 ];
+const MAX_NOW_PLAYING_CHARS: usize = 72;
+const MAX_TRAY_TOOLTIP_CHARS: usize = 120;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -56,9 +57,11 @@ pub struct AppState {
 }
 
 #[derive(Clone)]
-struct CheckItems {
+struct ShellUi {
+    tray: TrayIcon<tauri::Wry>,
+    now_playing: MenuItem<tauri::Wry>,
+    play_pause: MenuItem<tauri::Wry>,
     discord: CheckMenuItem<tauri::Wry>,
-    tray_discord: CheckMenuItem<tauri::Wry>,
     ad_block: CheckMenuItem<tauri::Wry>,
     close_to_tray: CheckMenuItem<tauri::Wry>,
     startup: CheckMenuItem<tauri::Wry>,
@@ -67,9 +70,9 @@ struct CheckItems {
 
 pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
     let initial = settings::snapshot(&state.settings);
-    let checks = build_app_menu(app, &initial)?;
-    build_tray(app, &checks, &initial)?;
+    let shell = build_tray(app, &initial)?;
     set_local_shortcuts(app.handle(), true, &state);
+
     for (shortcut, action) in [
         ("Ctrl+Alt+A", PREVIOUS_ID),
         ("Ctrl+Alt+S", PLAY_PAUSE_ID),
@@ -91,8 +94,9 @@ pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
     }
 
     let state_for_menu = state.clone();
+    let shell_for_menu = shell.clone();
     app.on_menu_event(move |app, event| {
-        handle_menu_event(app, event.id().0.as_str(), &state_for_menu, &checks);
+        handle_menu_event(app, event.id().0.as_str(), &state_for_menu, &shell_for_menu);
     });
 
     app.on_tray_icon_event(|tray, event| {
@@ -111,6 +115,7 @@ pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
         }
     });
 
+    app.manage(shell);
     Ok(())
 }
 
@@ -140,38 +145,29 @@ pub fn set_local_shortcuts(app: &AppHandle, focused: bool, state: &AppState) {
     }
 }
 
-fn build_app_menu(app: &App, initial: &settings::Settings) -> tauri::Result<CheckItems> {
-    let previous = MenuItemBuilder::with_id(PREVIOUS_ID, "Previous")
-        .accelerator("Ctrl+Alt+A")
+fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi> {
+    let now_playing = MenuItemBuilder::with_id("now_playing", "Nothing playing")
+        .enabled(false)
         .build(app)?;
-    let play_pause = MenuItemBuilder::with_id(PLAY_PAUSE_ID, "Play/Pause")
-        .accelerator("Ctrl+Alt+S")
-        .build(app)?;
-    let next = MenuItemBuilder::with_id(NEXT_ID, "Next")
-        .accelerator("Ctrl+Alt+D")
-        .build(app)?;
+    let show = MenuItemBuilder::with_id(TRAY_SHOW_ID, "Show YouTube Music").build(app)?;
+
+    let previous = MenuItemBuilder::with_id(PREVIOUS_ID, "Previous").build(app)?;
+    let play_pause = MenuItemBuilder::with_id(PLAY_PAUSE_ID, "Play/Pause").build(app)?;
+    let next = MenuItemBuilder::with_id(NEXT_ID, "Next").build(app)?;
     let playback = SubmenuBuilder::new(app, "Playback")
         .item(&previous)
         .item(&play_pause)
         .item(&next)
         .build()?;
 
-    let reload = MenuItemBuilder::with_id(RELOAD_ID, "Reload")
-        .accelerator("Ctrl+R")
-        .build(app)?;
-    let zoom_in = MenuItemBuilder::with_id(ZOOM_IN_ID, "Zoom In")
-        .accelerator("Ctrl+=")
-        .build(app)?;
-    let zoom_out = MenuItemBuilder::with_id(ZOOM_OUT_ID, "Zoom Out")
-        .accelerator("Ctrl+-")
-        .build(app)?;
-    let zoom_reset = MenuItemBuilder::with_id(ZOOM_RESET_ID, "Actual Size")
-        .accelerator("Ctrl+0")
-        .build(app)?;
-    let separator = PredefinedMenuItem::separator(app)?;
+    let reload = MenuItemBuilder::with_id(RELOAD_ID, "Reload").build(app)?;
+    let zoom_in = MenuItemBuilder::with_id(ZOOM_IN_ID, "Zoom In").build(app)?;
+    let zoom_out = MenuItemBuilder::with_id(ZOOM_OUT_ID, "Zoom Out").build(app)?;
+    let zoom_reset = MenuItemBuilder::with_id(ZOOM_RESET_ID, "Actual Size").build(app)?;
+    let view_separator = PredefinedMenuItem::separator(app)?;
     let view = SubmenuBuilder::new(app, "View")
         .item(&reload)
-        .item(&separator)
+        .item(&view_separator)
         .item(&zoom_in)
         .item(&zoom_out)
         .item(&zoom_reset)
@@ -197,15 +193,15 @@ fn build_app_menu(app: &App, initial: &settings::Settings) -> tauri::Result<Chec
         .checked(initial.start_minimized)
         .enabled(initial.launch_at_startup)
         .build(app)?;
-    let separator_one = PredefinedMenuItem::separator(app)?;
-    let separator_two = PredefinedMenuItem::separator(app)?;
+    let settings_separator_one = PredefinedMenuItem::separator(app)?;
+    let settings_separator_two = PredefinedMenuItem::separator(app)?;
     let settings_menu = SubmenuBuilder::new(app, "Settings")
         .item(&discord)
         .item(&discord_status)
-        .item(&separator_one)
+        .item(&settings_separator_one)
         .item(&ad_block)
         .item(&ad_block_status)
-        .item(&separator_two)
+        .item(&settings_separator_two)
         .item(&close_to_tray)
         .item(&startup)
         .item(&start_minimized)
@@ -213,36 +209,46 @@ fn build_app_menu(app: &App, initial: &settings::Settings) -> tauri::Result<Chec
 
     let clear_cache =
         MenuItemBuilder::with_id(CLEAR_CACHE_ID, "Clear Cache and Reload").build(app)?;
-    let reset_session = MenuItemBuilder::with_id(RESET_SESSION_ID, "Reset Session")
-        .accelerator("Ctrl+Shift+Delete")
-        .build(app)?;
+    let reset_session = MenuItemBuilder::with_id(RESET_SESSION_ID, "Reset Session").build(app)?;
     let check_updates =
         MenuItemBuilder::with_id(CHECK_UPDATES_ID, "Check for Updates").build(app)?;
-    let separator = PredefinedMenuItem::separator(app)?;
+    let tools_separator = PredefinedMenuItem::separator(app)?;
     let tools = SubmenuBuilder::new(app, "Tools")
         .item(&clear_cache)
         .item(&reset_session)
-        .item(&separator)
+        .item(&tools_separator)
         .item(&check_updates)
         .build()?;
 
+    let quit = MenuItemBuilder::with_id(TRAY_QUIT_ID, "Quit").build(app)?;
+    let separator_one = PredefinedMenuItem::separator(app)?;
+    let separator_two = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
+        .item(&now_playing)
+        .item(&show)
+        .item(&separator_one)
         .item(&playback)
         .item(&view)
         .item(&settings_menu)
         .item(&tools)
+        .item(&separator_two)
+        .item(&quit)
         .build()?;
-    if let Some(window) = app.get_webview_window("main") {
-        window.set_menu(menu)?;
+
+    let mut tray = TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .tooltip("YouTube Music");
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
     }
+    let tray = tray.build(app)?;
 
-    let tray_discord = CheckMenuItemBuilder::with_id(TRAY_DISCORD_RPC_ID, "Discord RPC")
-        .checked(initial.discord_rpc)
-        .build(app)?;
-
-    Ok(CheckItems {
+    Ok(ShellUi {
+        tray,
+        now_playing,
+        play_pause,
         discord,
-        tray_discord,
         ad_block,
         close_to_tray,
         startup,
@@ -250,39 +256,7 @@ fn build_app_menu(app: &App, initial: &settings::Settings) -> tauri::Result<Chec
     })
 }
 
-fn build_tray(app: &App, checks: &CheckItems, initial: &settings::Settings) -> tauri::Result<()> {
-    let show = MenuItemBuilder::with_id(TRAY_SHOW_ID, "Show/Hide").build(app)?;
-    let previous = MenuItemBuilder::with_id(PREVIOUS_ID, "Previous").build(app)?;
-    let play_pause = MenuItemBuilder::with_id(PLAY_PAUSE_ID, "Play/Pause").build(app)?;
-    let next = MenuItemBuilder::with_id(NEXT_ID, "Next").build(app)?;
-    checks.tray_discord.set_checked(initial.discord_rpc)?;
-    let quit = MenuItemBuilder::with_id(TRAY_QUIT_ID, "Quit").build(app)?;
-    let separator_one = PredefinedMenuItem::separator(app)?;
-    let separator_two = PredefinedMenuItem::separator(app)?;
-    let menu = MenuBuilder::new(app)
-        .item(&show)
-        .item(&separator_one)
-        .item(&previous)
-        .item(&play_pause)
-        .item(&next)
-        .item(&checks.tray_discord)
-        .item(&separator_two)
-        .item(&quit)
-        .build()?;
-
-    let mut tray = TrayIconBuilder::new()
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .tooltip("YouTube Music");
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
-    let _ = tray.build(app)?;
-
-    Ok(())
-}
-
-fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, checks: &CheckItems) {
+fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellUi) {
     match id {
         PREVIOUS_ID | PLAY_PAUSE_ID | NEXT_ID => media_action(app, id),
         RELOAD_ID => {
@@ -294,16 +268,13 @@ fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, checks: &Check
         ZOOM_OUT_ID => set_zoom(app, state, -0.1),
         ZOOM_RESET_ID => reset_zoom(app, state),
         DISCORD_RPC_ID => {
-            let enabled = checks.discord.is_checked().unwrap_or(true);
-            set_discord_rpc(state, checks, enabled);
-        }
-        TRAY_DISCORD_RPC_ID => {
-            let enabled = checks.tray_discord.is_checked().unwrap_or(true);
-            set_discord_rpc(state, checks, enabled);
+            let enabled = shell.discord.is_checked().unwrap_or(true);
+            settings::update(&state.settings, |value| value.discord_rpc = enabled);
+            state.presence.set_enabled(enabled);
         }
         DISCORD_STATUS_ID => platform::info("Discord RPC", &state.presence.status()),
         AD_BLOCK_ID => {
-            let enabled = checks.ad_block.is_checked().unwrap_or(true);
+            let enabled = shell.ad_block.is_checked().unwrap_or(true);
             state.adblock.set_enabled(enabled);
             settings::update(&state.settings, |value| value.ad_block = enabled);
             eval_main(
@@ -324,15 +295,15 @@ fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, checks: &Check
             ),
         ),
         CLOSE_TO_TRAY_ID => {
-            let enabled = checks.close_to_tray.is_checked().unwrap_or(false);
+            let enabled = shell.close_to_tray.is_checked().unwrap_or(false);
             settings::update(&state.settings, |value| value.close_to_tray = enabled);
         }
-        STARTUP_ID => set_startup(state, checks),
-        START_MINIMIZED_ID => set_start_minimized(state, checks),
+        STARTUP_ID => set_startup(state, shell),
+        START_MINIMIZED_ID => set_start_minimized(state, shell),
         CLEAR_CACHE_ID => clear_cache(app),
         RESET_SESSION_ID => reset_session(app, state),
         CHECK_UPDATES_ID => updates::check_in_background(false),
-        TRAY_SHOW_ID => toggle_main_window(app),
+        TRAY_SHOW_ID => show_main_window(app),
         TRAY_QUIT_ID => {
             state.quitting.store(true, Ordering::Relaxed);
             state.presence.clear();
@@ -357,38 +328,31 @@ fn handle_local_shortcut(app: &AppHandle, action: &str, state: &AppState) {
     }
 }
 
-fn set_discord_rpc(state: &AppState, checks: &CheckItems, enabled: bool) {
-    let _ = checks.discord.set_checked(enabled);
-    let _ = checks.tray_discord.set_checked(enabled);
-    settings::update(&state.settings, |value| value.discord_rpc = enabled);
-    state.presence.set_enabled(enabled);
-}
-
-fn set_startup(state: &AppState, checks: &CheckItems) {
-    let enabled = checks.startup.is_checked().unwrap_or(false);
-    let minimized = checks.start_minimized.is_checked().unwrap_or(false);
+fn set_startup(state: &AppState, shell: &ShellUi) {
+    let enabled = shell.startup.is_checked().unwrap_or(false);
+    let minimized = shell.start_minimized.is_checked().unwrap_or(false);
 
     match platform::set_startup_enabled(enabled, minimized) {
         Ok(()) => {
-            let _ = checks.start_minimized.set_enabled(enabled);
+            let _ = shell.start_minimized.set_enabled(enabled);
             settings::update(&state.settings, |value| {
                 value.launch_at_startup = enabled;
                 value.start_minimized = minimized;
             });
         }
         Err(error) => {
-            let _ = checks.startup.set_checked(!enabled);
+            let _ = shell.startup.set_checked(!enabled);
             platform::error("Launch at Startup", &error.to_string());
         }
     }
 }
 
-fn set_start_minimized(state: &AppState, checks: &CheckItems) {
-    let minimized = checks.start_minimized.is_checked().unwrap_or(false);
-    let enabled = checks.startup.is_checked().unwrap_or(false);
+fn set_start_minimized(state: &AppState, shell: &ShellUi) {
+    let minimized = shell.start_minimized.is_checked().unwrap_or(false);
+    let enabled = shell.startup.is_checked().unwrap_or(false);
 
     if let Err(error) = platform::set_startup_enabled(enabled, minimized) {
-        let _ = checks.start_minimized.set_checked(!minimized);
+        let _ = shell.start_minimized.set_checked(!minimized);
         platform::error("Launch at Startup", &error.to_string());
         return;
     }
@@ -464,6 +428,58 @@ fn media_action(app: &AppHandle, action: &str) {
     eval_main(app, script);
 }
 
+pub fn update_now_playing(app: &AppHandle, track: Option<&TrackMetadata>) {
+    let Some(shell) = app.try_state::<ShellUi>() else {
+        return;
+    };
+
+    match track {
+        Some(track) => {
+            let label = now_playing_label(track);
+            let tooltip = tray_tooltip(track);
+            let _ = shell.now_playing.set_text(label);
+            let _ = shell
+                .play_pause
+                .set_text(if track.playing { "Pause" } else { "Play" });
+            let _ = shell.tray.set_tooltip(Some(tooltip));
+        }
+        None => {
+            let _ = shell.now_playing.set_text("Nothing playing");
+            let _ = shell.play_pause.set_text("Play/Pause");
+            let _ = shell.tray.set_tooltip(Some("YouTube Music"));
+        }
+    }
+}
+
+fn now_playing_label(track: &TrackMetadata) -> String {
+    let label = match track
+        .artist
+        .as_deref()
+        .filter(|artist| !artist.trim().is_empty())
+    {
+        Some(artist) => format!("{} - {artist}", track.title),
+        None => track.title.clone(),
+    };
+    truncate_chars(&label, MAX_NOW_PLAYING_CHARS)
+}
+
+fn tray_tooltip(track: &TrackMetadata) -> String {
+    truncate_chars(
+        &format!("YouTube Music\n{}", now_playing_label(track)),
+        MAX_TRAY_TOOLTIP_CHARS,
+    )
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+
+    let mut shortened: String = value.chars().take(max_chars.saturating_sub(3)).collect();
+    shortened.push_str("...");
+    shortened
+}
+
 pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -479,5 +495,44 @@ pub fn toggle_main_window(app: &AppHandle) {
         } else {
             show_main_window(app);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(title: &str, artist: Option<&str>, playing: bool) -> TrackMetadata {
+        TrackMetadata {
+            title: title.to_string(),
+            artist: artist.map(str::to_string),
+            album: None,
+            playing,
+            url: None,
+            cover_url: None,
+            elapsed_seconds: None,
+            duration_seconds: None,
+        }
+    }
+
+    #[test]
+    fn now_playing_includes_artist_when_available() {
+        assert_eq!(
+            now_playing_label(&track("Young Dumb & Broke", Some("Khalid"), true)),
+            "Young Dumb & Broke - Khalid"
+        );
+        assert_eq!(
+            now_playing_label(&track("Instrumental", None, false)),
+            "Instrumental"
+        );
+    }
+
+    #[test]
+    fn tray_text_is_bounded() {
+        let long = "x".repeat(200);
+        let track = track(&long, Some("Artist"), true);
+
+        assert!(now_playing_label(&track).chars().count() <= MAX_NOW_PLAYING_CHARS);
+        assert!(tray_tooltip(&track).chars().count() <= MAX_TRAY_TOOLTIP_CHARS);
     }
 }
