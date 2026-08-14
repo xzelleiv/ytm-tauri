@@ -23,6 +23,7 @@ use url_policy::{is_allowed_navigation_url, is_youtube_music_url};
 const YOUTUBE_MUSIC_URL: &str = "https://music.youtube.com";
 const AD_BLOCK_SCRIPT: &str = include_str!("adblock_probe.js");
 const FEATURE_PROBE_SCRIPT: &str = include_str!("feature_probe.js");
+const SYNCED_LYRICS_SCRIPT: &str = include_str!("synced_lyrics_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -212,11 +213,11 @@ fn initialization_script(settings: &settings::Settings) -> String {
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
         format!(
-            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
         )
     } else {
         format!(
-            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
         )
     }
 }
