@@ -21,6 +21,7 @@ use url_policy::{is_allowed_navigation_url, is_youtube_music_url};
 
 const YOUTUBE_MUSIC_URL: &str = "https://music.youtube.com";
 const AD_BLOCK_SCRIPT: &str = include_str!("adblock_probe.js");
+const FEATURE_PROBE_SCRIPT: &str = include_str!("feature_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,7 +116,7 @@ pub fn run() {
                 .min_inner_size(900.0, 620.0)
                 .center()
                 .zoom_hotkeys_enabled(false)
-                .initialization_script(initialization_script(initial.ad_block))
+                .initialization_script(initialization_script(&initial))
                 .on_navigation(move |url| {
                     let allowed = is_allowed_navigation_url(url);
 
@@ -191,14 +192,49 @@ pub fn run() {
         .expect("error while running YouTube Music");
 }
 
-fn initialization_script(ad_block_enabled: bool) -> String {
-    let enabled = format!("window.__ytMusicTauriAdBlockEnabled = {ad_block_enabled};");
+fn initialization_script(settings: &settings::Settings) -> String {
+    let ad_block = format!(
+        "window.__ytMusicTauriAdBlockEnabled = {};",
+        settings.ad_block
+    );
+    let features = format!(
+        "window.__ytmFeatureConfig = {};",
+        page_feature_config(settings)
+    );
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
-        format!("{enabled}\n{AD_BLOCK_SCRIPT}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}")
+        format!(
+            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+        )
     } else {
-        format!("{enabled}\n{AD_BLOCK_SCRIPT}\n{TRACK_PROBE_SCRIPT}")
+        format!(
+            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{FEATURE_PROBE_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+        )
     }
+}
+
+pub fn page_feature_config(settings: &settings::Settings) -> String {
+    serde_json::json!({
+        "synced_lyrics": settings.synced_lyrics,
+        "lyrics_precise_timing": settings.lyrics_precise_timing,
+        "lyrics_show_inexact": settings.lyrics_show_inexact,
+        "lyrics_show_timecodes": settings.lyrics_show_timecodes,
+        "lyrics_romanization": settings.lyrics_romanization,
+        "lyrics_line_effect": settings.lyrics_line_effect,
+        "custom_output_device": settings.custom_output_device,
+        "output_device": settings.output_device,
+        "equalizer": settings.equalizer,
+        "equalizer_preset": settings.equalizer_preset,
+        "precise_volume": settings.precise_volume,
+        "exponential_volume": settings.exponential_volume,
+        "volume_step": settings.volume_step,
+        "navigation_controls": settings.navigation_controls,
+        "playback_speed": settings.playback_speed,
+        "playback_rate": settings.playback_rate,
+        "skip_disliked": settings.skip_disliked,
+        "album_color_theme": settings.album_color_theme,
+    })
+    .to_string()
 }
 
 fn should_accept_presence_message(current_url: Option<&Url>, message: &PresenceMessage) -> bool {
@@ -283,5 +319,18 @@ mod tests {
             NewWindowAction::OpenExternal
         );
         assert_eq!(new_window_action(&blank_url), NewWindowAction::Deny);
+    }
+
+    #[test]
+    fn page_config_excludes_native_secrets() {
+        let settings = settings::Settings {
+            lastfm_session_key: Some("lastfm-secret".to_string()),
+            listenbrainz_token: Some("listenbrainz-secret".to_string()),
+            ..Default::default()
+        };
+        let config = page_feature_config(&settings);
+
+        assert!(!config.contains("lastfm-secret"));
+        assert!(!config.contains("listenbrainz-secret"));
     }
 }
