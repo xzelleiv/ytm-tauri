@@ -64,7 +64,7 @@ impl Default for Settings {
             custom_output_device: false,
             output_device: "default".to_string(),
             equalizer: false,
-            equalizer_preset: "flat".to_string(),
+            equalizer_preset: "bass-booster".to_string(),
             precise_volume: false,
             exponential_volume: false,
             volume_step: 1.0,
@@ -151,7 +151,7 @@ mod tests {
         assert!(settings.lyrics_show_inexact);
         assert_eq!(settings.lyrics_line_effect, "fancy");
         assert_eq!(settings.output_device, "default");
-        assert_eq!(settings.equalizer_preset, "flat");
+        assert_eq!(settings.equalizer_preset, "bass-booster");
         assert_eq!(settings.playback_rate, 1.0);
     }
 }
