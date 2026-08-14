@@ -16,7 +16,7 @@ use std::sync::{
     Arc,
 };
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
-use tauri::{Manager, Url, WebviewUrl, WindowEvent};
+use tauri::{Manager, Theme, Url, WebviewUrl, WindowEvent};
 use url_policy::{is_allowed_navigation_url, is_youtube_music_url};
 
 const YOUTUBE_MUSIC_URL: &str = "https://music.youtube.com";
@@ -110,6 +110,7 @@ pub fn run() {
 
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(blank_url))
                 .title("YouTube Music")
+                .theme(Some(Theme::Dark))
                 .inner_size(1280.0, 840.0)
                 .min_inner_size(900.0, 620.0)
                 .center()
@@ -153,10 +154,15 @@ pub fn run() {
                                     PresenceMessage::Track(track) => {
                                         let window_title = track.window_title();
                                         let _ = window.set_title(&window_title);
+                                        controls::update_now_playing(
+                                            window.app_handle(),
+                                            Some(&track),
+                                        );
                                         presence_for_window.update(track);
                                     }
                                     PresenceMessage::Clear => {
                                         let _ = window.set_title("YouTube Music");
+                                        controls::update_now_playing(window.app_handle(), None);
                                         presence_for_window.clear();
                                     }
                                 }
