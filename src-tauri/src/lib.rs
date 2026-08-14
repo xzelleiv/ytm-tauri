@@ -3,15 +3,18 @@
 mod adblock;
 mod controls;
 mod feature_bridge;
+mod notifications;
 mod platform;
 mod presence;
 mod scrobble;
 mod settings;
 mod updates;
 mod url_policy;
+mod windows_media;
 
 use adblock::AdBlockController;
 use controls::AppState;
+use notifications::NotificationController;
 use presence::{PresenceController, PresenceMessage};
 use scrobble::ScrobbleController;
 use std::sync::{
@@ -72,12 +75,16 @@ pub fn run() {
     let initial = settings::snapshot(&settings);
     let presence = PresenceController::new(initial.discord_rpc);
     let scrobbler = ScrobbleController::new(settings.clone());
+    let notifications = NotificationController::new(settings.clone());
     let adblock = AdBlockController::new(initial.ad_block);
     let presence_for_navigation = presence.clone();
     let presence_for_window = presence.clone();
     let scrobbler_for_navigation = scrobbler.clone();
     let scrobbler_for_window = scrobbler.clone();
     let scrobbler_for_events = scrobbler.clone();
+    let notifications_for_navigation = notifications.clone();
+    let notifications_for_window = notifications.clone();
+    let notifications_for_events = notifications.clone();
     let adblock_for_webview = adblock.clone();
     let state = AppState {
         settings,
@@ -88,7 +95,7 @@ pub fn run() {
     let state_for_events = state.clone();
     let start_minimized = std::env::args().any(|argument| argument == "--minimized");
 
-    let mut builder = tauri::Builder::default();
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
 
     #[cfg(desktop)]
     {
@@ -115,6 +122,7 @@ pub fn run() {
             WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
                 state_for_events.presence.clear();
                 scrobbler_for_events.clear();
+                notifications_for_events.clear();
             }
             _ => {}
         })
@@ -141,6 +149,7 @@ pub fn run() {
                     if !is_youtube_music_url(url) {
                         presence_for_navigation.clear();
                         scrobbler_for_navigation.clear();
+                        notifications_for_navigation.clear();
                     }
                     if !allowed && url.scheme() == "https" {
                         platform::open_url(url.as_str());
@@ -185,12 +194,19 @@ pub fn run() {
                                             window.app_handle(),
                                             Some(&track),
                                         );
+                                        notifications_for_window.update(
+                                            window.app_handle(),
+                                            &track,
+                                        );
+                                        windows_media::update(&window, Some(&track));
                                         scrobbler_for_window.update(track.clone());
                                         presence_for_window.update(track);
                                     }
                                     PresenceMessage::Clear => {
                                         let _ = window.set_title("YouTube Music");
                                         controls::update_now_playing(window.app_handle(), None);
+                                        notifications_for_window.clear();
+                                        windows_media::update(&window, None);
                                         scrobbler_for_window.clear();
                                         presence_for_window.clear();
                                     }
@@ -205,7 +221,9 @@ pub fn run() {
                     }
                 })
                 .build()?;
+            let windows_settings = state.settings.clone();
             controls::install(app, state)?;
+            windows_media::install(&window, windows_settings);
             let _ = window.set_zoom(initial.zoom.clamp(0.5, 2.0));
             let _ = window.with_webview(move |webview| adblock_for_webview.install(webview));
             window.navigate(music_url)?;
