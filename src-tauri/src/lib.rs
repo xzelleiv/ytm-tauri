@@ -5,6 +5,7 @@ mod controls;
 mod feature_bridge;
 mod platform;
 mod presence;
+mod scrobble;
 mod settings;
 mod updates;
 mod url_policy;
@@ -12,6 +13,7 @@ mod url_policy;
 use adblock::AdBlockController;
 use controls::AppState;
 use presence::{PresenceController, PresenceMessage};
+use scrobble::ScrobbleController;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -69,9 +71,13 @@ pub fn run() {
     });
     let initial = settings::snapshot(&settings);
     let presence = PresenceController::new(initial.discord_rpc);
+    let scrobbler = ScrobbleController::new(settings.clone());
     let adblock = AdBlockController::new(initial.ad_block);
     let presence_for_navigation = presence.clone();
     let presence_for_window = presence.clone();
+    let scrobbler_for_navigation = scrobbler.clone();
+    let scrobbler_for_window = scrobbler.clone();
+    let scrobbler_for_events = scrobbler.clone();
     let adblock_for_webview = adblock.clone();
     let state = AppState {
         settings,
@@ -108,6 +114,7 @@ pub fn run() {
             }
             WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
                 state_for_events.presence.clear();
+                scrobbler_for_events.clear();
             }
             _ => {}
         })
@@ -133,6 +140,7 @@ pub fn run() {
 
                     if !is_youtube_music_url(url) {
                         presence_for_navigation.clear();
+                        scrobbler_for_navigation.clear();
                     }
                     if !allowed && url.scheme() == "https" {
                         platform::open_url(url.as_str());
@@ -177,11 +185,13 @@ pub fn run() {
                                             window.app_handle(),
                                             Some(&track),
                                         );
+                                        scrobbler_for_window.update(track.clone());
                                         presence_for_window.update(track);
                                     }
                                     PresenceMessage::Clear => {
                                         let _ = window.set_title("YouTube Music");
                                         controls::update_now_playing(window.app_handle(), None);
+                                        scrobbler_for_window.clear();
                                         presence_for_window.clear();
                                     }
                                 }
