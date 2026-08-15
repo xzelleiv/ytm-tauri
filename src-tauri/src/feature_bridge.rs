@@ -79,7 +79,7 @@ fn parse_request(title: &str) -> Option<FeatureRequest> {
 fn execute_request(request: &FeatureRequest) -> FeatureResponse {
     let client = match reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(5))
-        .user_agent("ytm-tauri/0.1.8")
+        .user_agent(concat!("ytm-tauri/", env!("CARGO_PKG_VERSION")))
         .build()
     {
         Ok(client) => client,
