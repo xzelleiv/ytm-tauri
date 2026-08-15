@@ -22,7 +22,14 @@
     if (sending || !queue.length) return;
     sending = true;
     const item = queue.shift();
+    item.timeout = setTimeout(() => {
+      requests.delete(item.id);
+      sending = false;
+      flushQueue();
+      item.reject(new Error("feature request timed out"));
+    }, 15_000);
     requests.set(item.id, item);
+    item.message.ts = Date.now();
     document.title = `YTMFEATURE:${JSON.stringify(item.message)}`;
   }
 
@@ -56,13 +63,7 @@
       };
 
       return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          requests.delete(id);
-          sending = false;
-          flushQueue();
-          reject(new Error("feature request timed out"));
-        }, 10_000);
-        queue.push({ id, message, resolve, reject, timeout });
+        queue.push({ id, message, resolve, reject });
         flushQueue();
       });
     },
@@ -76,7 +77,7 @@
       }
       sending = false;
       if (queue.length) {
-        setTimeout(flushQueue, 15);
+        setTimeout(flushQueue, 10);
       }
     },
   };

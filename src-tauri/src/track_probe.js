@@ -277,6 +277,10 @@
     });
 
   const publishClear = () => {
+    if (document.title.startsWith("YTMFEATURE:")) {
+      window.setTimeout(publishClear, 80);
+      return;
+    }
     if (lastPayload === CLEAR_PAYLOAD) {
       return;
     }
@@ -288,6 +292,10 @@
   };
 
   const publish = () => {
+    if (document.title.startsWith("YTMFEATURE:")) {
+      window.setTimeout(publish, 80);
+      return;
+    }
     if (!isMusicHost() || !document.body) {
       publishClear();
       return;
@@ -315,8 +323,6 @@
       lastPayload = payload;
       lastPresenceKey = key;
       lastProgressPublish = now;
-      // Tauri listens for title changes from the remote page. This avoids exposing
-      // a Tauri IPC surface to music.youtube.com.
       document.title = payload;
     }
   };

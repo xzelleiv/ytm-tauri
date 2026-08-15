@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, thread};
+use std::{collections::HashMap, thread, time::Duration};
 use tauri::{Url, WebviewWindow};
 
 const PREFIX: &str = "YTMFEATURE:";
@@ -79,6 +79,8 @@ fn parse_request(title: &str) -> Option<FeatureRequest> {
 fn execute_request(request: &FeatureRequest) -> FeatureResponse {
     let client = match reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(5))
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
         .user_agent(concat!("ytm-tauri/", env!("CARGO_PKG_VERSION")))
         .build()
     {
