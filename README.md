@@ -1,9 +1,9 @@
 # YouTube Music Unofficial
 
-[![Release](https://img.shields.io/github/v/release/justhenix/yt-music-unofficial?label=release)](https://github.com/justhenix/yt-music-unofficial/releases/latest)
+[![Release](https://img.shields.io/github/v/release/xzelleiv/ytm-tauri?label=release)](https://github.com/xzelleiv/ytm-tauri/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4)](#requirements)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB)](https://tauri.app/)
-[![License](https://img.shields.io/github/license/justhenix/yt-music-unofficial)](LICENSE)
+[![License](https://img.shields.io/github/license/xzelleiv/ytm-tauri)](LICENSE)
 
 Unofficial Windows desktop app for YouTube Music, built with Tauri v2 and WebView2.
 
@@ -13,15 +13,15 @@ This app gives YouTube Music its own dedicated Windows window, keeps your normal
 
 - Windows only.
 - Unofficial project, not affiliated with YouTube, Google, Discord, Microsoft, or Tauri.
-- Current release: [`v0.1.8`](https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.8).
+- Current release: [`v0.2.0`](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.0).
 
 ## Download
 
 Use the NSIS setup installer for normal installs:
 
-[Download `YouTube.Music_0.1.8_x64-setup.exe`](https://github.com/justhenix/yt-music-unofficial/releases/download/v0.1.8/YouTube.Music_0.1.8_x64-setup.exe)
+[Download `YouTube.Music_0.2.0_x64-setup.exe`](https://github.com/xzelleiv/ytm-tauri/releases/download/v0.2.0/YouTube.Music_0.2.0_x64-setup.exe)
 
-An MSI package is also available on the [release page](https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.8).
+An MSI package is also available on the [release page](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.0).
 
 > Windows may show an “Unknown publisher” notice because this community release is not code-signed.
 
@@ -144,6 +144,12 @@ When the blocker is wired correctly, the window title briefly becomes `ADBLOCK_S
 Add or update unit tests when changing URL policy, ad URL rules, or security-sensitive bridge behavior.
 
 </details>
+
+## Credits
+
+- [xzelleiv](https://github.com/xzelleiv)
+- [Henix](https://github.com/justhenix) (original creator of [`yt-music-unofficial`](https://github.com/justhenix/yt-music-unofficial))
+- [Pear Desktop](https://github.com/pear-devs/pear-desktop)
 
 ## License
 

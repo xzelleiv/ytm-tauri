@@ -2,8 +2,8 @@ use std::{thread, time::Duration};
 
 use crate::platform;
 
-const LATEST_RELEASE_URL: &str = "https://github.com/justhenix/yt-music-unofficial/releases/latest";
-const RELEASE_URL_PREFIX: &str = "https://github.com/justhenix/yt-music-unofficial/releases/tag/v";
+const LATEST_RELEASE_URL: &str = "https://github.com/xzelleiv/ytm-tauri/releases/latest";
+const RELEASE_URL_PREFIX: &str = "https://github.com/xzelleiv/ytm-tauri/releases/tag/v";
 
 enum UpdateResult {
     Available { version: String, url: String },
@@ -74,7 +74,7 @@ mod tests {
     #[test]
     fn release_version_comes_from_repository_redirect() {
         assert_eq!(
-            release_version("https://github.com/justhenix/yt-music-unofficial/releases/tag/v0.1.5"),
+            release_version("https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.1.5"),
             Some(semver::Version::new(0, 1, 5))
         );
         assert_eq!(

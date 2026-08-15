@@ -16,6 +16,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "xzelleiv",
+    "copyright": "Copyright © 2026 xzelleiv. Original work by Henix.",
     "licenseFile": "../LICENSE",
     "resources": {
       "../LICENSE": "LICENSE",
