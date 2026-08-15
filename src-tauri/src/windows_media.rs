@@ -8,7 +8,7 @@ use windows::{
         System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
         UI::{
             Shell::{
-                DefSubclassProc, SetWindowSubclass, ITaskbarList3, TaskbarList, THBF_ENABLED,
+                DefSubclassProc, ITaskbarList3, SetWindowSubclass, TaskbarList, THBF_ENABLED,
                 THBF_HIDDEN, THBN_CLICKED, THB_FLAGS, THB_ICON, THB_TOOLTIP, THUMBBUTTON,
             },
             WindowsAndMessaging::{CreateIcon, HICON, WM_COMMAND},
@@ -104,8 +104,8 @@ fn update_buttons(hwnd: HWND, track: Option<&TrackMetadata>) {
     let enabled = SETTINGS
         .get()
         .map(settings::snapshot)
-        .map_or(false, |value| value.windows_media_controls);
-    let playing = track.map_or(false, |value| value.playing);
+        .is_some_and(|value| value.windows_media_controls);
+    let playing = track.is_some_and(|value| value.playing);
 
     let Ok(taskbar) = taskbar() else {
         return;
@@ -144,8 +144,7 @@ fn update_buttons(hwnd: HWND, track: Option<&TrackMetadata>) {
 
 fn taskbar() -> WindowsResult<ITaskbarList3> {
     unsafe {
-        let taskbar: ITaskbarList3 =
-            CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER)?;
+        let taskbar: ITaskbarList3 = CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER)?;
         taskbar.HrInit()?;
         Ok(taskbar)
     }
@@ -189,7 +188,7 @@ fn media_icon(kind: IconKind) -> WindowsResult<HICON> {
         }
     }
 
-    unsafe { CreateIcon(None, 16, 16, 1, 1, &and_mask, &xor_mask) }
+    unsafe { CreateIcon(None, 16, 16, 1, 1, and_mask.as_ptr(), xor_mask.as_ptr()) }
 }
 
 fn set_bit(mask: &mut [u8; 32], x: usize, y: usize) {
@@ -201,18 +200,14 @@ fn icon_pixel(kind: IconKind, x: usize, y: usize) -> bool {
     match kind {
         IconKind::Play => {
             let distance = y.abs_diff(7).min(y.abs_diff(8));
-            x >= 5 && x <= 11 && x - 5 <= 6 - distance
+            distance <= 6 && (5..=11).contains(&x) && x - 5 <= 6 - distance
         }
         IconKind::Pause => (4..=6).contains(&x) || (9..=11).contains(&x),
         IconKind::Previous => {
-            x == 3
-                || triangle_pixel(4, 9, x, y, true)
-                || triangle_pixel(8, 13, x, y, true)
+            x == 3 || triangle_pixel(4, 9, x, y, true) || triangle_pixel(8, 13, x, y, true)
         }
         IconKind::Next => {
-            x == 12
-                || triangle_pixel(2, 7, x, y, false)
-                || triangle_pixel(6, 11, x, y, false)
+            x == 12 || triangle_pixel(2, 7, x, y, false) || triangle_pixel(6, 11, x, y, false)
         }
     }
 }
@@ -243,7 +238,12 @@ mod tests {
 
     #[test]
     fn generated_icons_have_pixels() {
-        for kind in [IconKind::Previous, IconKind::Play, IconKind::Pause, IconKind::Next] {
+        for kind in [
+            IconKind::Previous,
+            IconKind::Play,
+            IconKind::Pause,
+            IconKind::Next,
+        ] {
             let pixels = (0..16)
                 .flat_map(|y| (0..16).map(move |x| icon_pixel(kind, x, y)))
                 .filter(|value| *value)

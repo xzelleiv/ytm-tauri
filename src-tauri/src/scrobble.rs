@@ -76,9 +76,7 @@ fn update_track(
 ) {
     let key = track_key(&track);
     let now = Instant::now();
-    let is_new = current
-        .as_ref()
-        .map_or(true, |value| value.key != key);
+    let is_new = current.as_ref().map_or(true, |value| value.key != key);
 
     if is_new {
         let elapsed = track.elapsed_seconds.unwrap_or(0);
@@ -114,13 +112,8 @@ fn update_track(
             state.lastfm_now_playing = send_lastfm_now_playing(client, &config, &state.track);
         }
         if config.listenbrainz_scrobbling && !state.listenbrainz_now_playing {
-            state.listenbrainz_now_playing = send_listenbrainz(
-                client,
-                &config,
-                &state.track,
-                None,
-                "playing_now",
-            );
+            state.listenbrainz_now_playing =
+                send_listenbrainz(client, &config, &state.track, None, "playing_now");
         }
     }
 
@@ -162,7 +155,11 @@ fn send_lastfm_now_playing(
     let Some((api_key, secret, session_key)) = lastfm_credentials(settings) else {
         return false;
     };
-    let Some(artist) = track.artist.as_deref().filter(|value| !value.trim().is_empty()) else {
+    let Some(artist) = track
+        .artist
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
         return false;
     };
 
@@ -186,7 +183,11 @@ fn send_lastfm_scrobble(
     let Some((api_key, secret, session_key)) = lastfm_credentials(settings) else {
         return false;
     };
-    let Some(artist) = track.artist.as_deref().filter(|value| !value.trim().is_empty()) else {
+    let Some(artist) = track
+        .artist
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
         return false;
     };
 
@@ -203,7 +204,11 @@ fn send_lastfm_scrobble(
 }
 
 fn add_optional_lastfm_metadata(params: &mut BTreeMap<String, String>, track: &TrackMetadata) {
-    if let Some(album) = track.album.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(album) = track
+        .album
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         params.insert("album".to_string(), album.to_string());
     }
     if let Some(duration) = track.duration_seconds {
@@ -240,7 +245,11 @@ fn send_listenbrainz(
     let Some(token) = token else {
         return false;
     };
-    let Some(artist) = track.artist.as_deref().filter(|value| !value.trim().is_empty()) else {
+    let Some(artist) = track
+        .artist
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
         return false;
     };
 
@@ -256,7 +265,11 @@ fn send_listenbrainz(
             }
         }
     });
-    if let Some(album) = track.album.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(album) = track
+        .album
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         listen["track_metadata"]["release_name"] = json!(album);
     }
     if let Some(timestamp) = listened_at {

@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || runtime.audioEngine || location.origin !== "https://music.youtube.com") return;
+  if (!runtime || runtime.audioEngine) return;
 
   let context = null;
   let media = null;

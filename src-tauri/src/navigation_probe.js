@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || location.origin !== "https://music.youtube.com") return;
+  if (!runtime) return;
 
   let container = null;
   let timer = 0;

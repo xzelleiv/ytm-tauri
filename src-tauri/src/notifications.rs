@@ -58,8 +58,14 @@ fn track_key(track: &TrackMetadata) -> String {
 
 fn notification_body(track: &TrackMetadata) -> String {
     match (
-        track.artist.as_deref().filter(|value| !value.trim().is_empty()),
-        track.album.as_deref().filter(|value| !value.trim().is_empty()),
+        track
+            .artist
+            .as_deref()
+            .filter(|value| !value.trim().is_empty()),
+        track
+            .album
+            .as_deref()
+            .filter(|value| !value.trim().is_empty()),
     ) {
         (Some(artist), Some(album)) => format!("{artist} · {album}"),
         (Some(artist), None) => artist.to_string(),
@@ -87,7 +93,10 @@ mod tests {
 
     #[test]
     fn body_uses_artist_and_album() {
-        assert_eq!(notification_body(&track(Some("Artist"), Some("Album"))), "Artist · Album");
+        assert_eq!(
+            notification_body(&track(Some("Artist"), Some("Album"))),
+            "Artist · Album"
+        );
         assert_eq!(notification_body(&track(Some("Artist"), None)), "Artist");
         assert_eq!(notification_body(&track(None, None)), "");
     }

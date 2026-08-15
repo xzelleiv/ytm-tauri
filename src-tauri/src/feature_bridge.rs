@@ -78,7 +78,7 @@ fn parse_request(title: &str) -> Option<FeatureRequest> {
 
 fn execute_request(request: &FeatureRequest) -> FeatureResponse {
     let client = match reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::limited(5))
         .user_agent("ytm-tauri/0.1.8")
         .build()
     {
@@ -146,9 +146,12 @@ fn is_allowed_host(host: &str) -> bool {
         "lrclib.net"
             | "genius.com"
             | "www.genius.com"
+            | "megalobiz.com"
             | "www.megalobiz.com"
             | "apic-desktop.musixmatch.com"
             | "ytmbrowseproxy.zvz.be"
+            | "b-ytmbrowseproxy.zvz.be"
+            | "sponsor.ajay.app"
     )
 }
 
@@ -183,7 +186,8 @@ mod tests {
 
     #[test]
     fn bridge_accepts_known_provider_requests() {
-        let request = r#"YTMFEATURE:{"id":7,"kind":"http","url":"https://lrclib.net/api/search?q=test"}"#;
+        let request =
+            r#"YTMFEATURE:{"id":7,"kind":"http","url":"https://lrclib.net/api/search?q=test"}"#;
         let parsed = parse_request(request).expect("request");
 
         assert_eq!(parsed.id, 7);

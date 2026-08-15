@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || location.origin !== "https://music.youtube.com") return;
+  if (!runtime) return;
 
   const MIN = 0.07;
   const MAX = 16;
@@ -31,7 +31,7 @@
   }
 
   function buildControl() {
-    container.innerHTML = "";
+    container.replaceChildren();
     container.style.cssText = "padding:10px 16px 12px;color:var(--ytmusic-text-primary,#fff);font:500 14px Segoe UI,sans-serif;min-width:260px;box-sizing:border-box";
     const row = document.createElement("div");
     row.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:7px";

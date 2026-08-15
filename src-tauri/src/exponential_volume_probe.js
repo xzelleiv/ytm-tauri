@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || location.origin !== "https://music.youtube.com") return;
+  if (!runtime) return;
 
   const exponent = 3;
   const original = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "volume");

@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime?.audioEngine || location.origin !== "https://music.youtube.com") return;
+  if (!runtime?.audioEngine) return;
 
   const STORAGE_KEY = "ytm-tauri-output-device";
   let dialog = null;
@@ -48,7 +48,8 @@
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) closeDialog();
     });
-    document.body.appendChild(dialog);
+    const target = document.body || document.documentElement;
+    if (target) target.appendChild(dialog);
   }
 
   function button(label, handler) {

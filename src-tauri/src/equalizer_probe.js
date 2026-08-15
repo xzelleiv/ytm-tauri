@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime?.audioEngine || location.origin !== "https://music.youtube.com") return;
+  if (!runtime?.audioEngine) return;
 
   const presets = {
     "bass-booster": [{ type: "lowshelf", frequency: 80, Q: 100, gain: 12 }],

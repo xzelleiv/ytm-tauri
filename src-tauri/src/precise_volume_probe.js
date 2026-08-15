@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || location.origin !== "https://music.youtube.com") return;
+  if (!runtime) return;
 
   let handler = null;
   let hudTimer = 0;
@@ -27,7 +27,8 @@
       hud = document.createElement("div");
       hud.id = "ytm-tauri-volume-hud";
       hud.style.cssText = "position:fixed;left:50%;bottom:100px;z-index:2147483645;transform:translateX(-50%);padding:9px 14px;border-radius:20px;background:rgba(20,20,20,.88);color:white;font:600 13px Segoe UI,sans-serif;pointer-events:none;transition:opacity .18s";
-      document.body.appendChild(hud);
+      const target = document.body || document.documentElement;
+      if (target) target.appendChild(hud);
     }
     hud.textContent = `Volume ${Math.round(volume)}%`;
     hud.style.opacity = "1";

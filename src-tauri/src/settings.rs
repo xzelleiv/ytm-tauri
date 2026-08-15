@@ -38,6 +38,13 @@ pub struct Settings {
     pub playback_rate: f64,
     pub skip_disliked: bool,
     pub album_color_theme: bool,
+    pub sponsorblock: bool,
+    pub blur_nav_bar: bool,
+    pub disable_autoplay: bool,
+    pub video_toggle: bool,
+    pub ambient_mode: bool,
+    pub skip_silences: bool,
+    pub crossfade: bool,
 }
 
 impl Default for Settings {
@@ -49,7 +56,7 @@ impl Default for Settings {
             launch_at_startup: false,
             start_minimized: false,
             zoom: 1.0,
-            synced_lyrics: false,
+            synced_lyrics: true,
             lyrics_precise_timing: true,
             lyrics_show_inexact: true,
             lyrics_show_timecodes: false,
@@ -73,6 +80,13 @@ impl Default for Settings {
             playback_rate: 1.0,
             skip_disliked: false,
             album_color_theme: false,
+            sponsorblock: true,
+            blur_nav_bar: true,
+            disable_autoplay: false,
+            video_toggle: false,
+            ambient_mode: true,
+            skip_silences: false,
+            crossfade: false,
         }
     }
 }
@@ -146,7 +160,7 @@ mod tests {
         assert!(!settings.discord_rpc);
         assert!(settings.ad_block);
         assert_eq!(settings.zoom, 1.0);
-        assert!(!settings.synced_lyrics);
+        assert!(settings.synced_lyrics);
         assert!(settings.lyrics_precise_timing);
         assert!(settings.lyrics_show_inexact);
         assert_eq!(settings.lyrics_line_effect, "fancy");

@@ -1,133 +1,605 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || location.origin !== "https://music.youtube.com") return;
+  if (!runtime) return;
 
-  const PROVIDERS = ["YTMusic", "LRCLib", "MusixMatch", "LyricsGenius"];
-  const HEADER = "#tabsContent > .tab-header:nth-of-type(2)";
-  const TAB = '#tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"]';
+  const PROVIDERS = ["LRCLib", "YTMusic", "MusixMatch", "Megalobiz", "LyricsGenius"];
   const STYLE_ID = "ytm-tauri-synced-lyrics-style";
   const CONTAINER_ID = "synced-lyrics-container";
   const STAR_KEY = "ytmd-sl-starred-";
   const CACHE = new Map();
 
-  let observer = null;
-  let timer = 0;
-  let trackTimer = 0;
+  let headerObserver = null;
+  let updateInterval = 0;
+  let trackPollInterval = 0;
   let activeTrack = null;
   let currentProvider = PROVIDERS[0];
   let manuallySwitched = false;
   let renderVersion = 0;
   let lastCurrentIndex = -1;
+  let isUserScrolling = false;
+  let userScrollTimeout = 0;
+
   let musixmatchToken = null;
   let musixmatchTokenExpires = 0;
   let musixmatchCookie = "x-mxm-user-id=";
 
   const state = () => CACHE.get(activeTrack?.videoId)?.providers || null;
-  const config = () => runtime.config;
+  const config = () => runtime.config || {};
   const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
 
   const styles = `
-html.ytm-tauri-synced-lyrics ${TAB} > :not(#${CONTAINER_ID}) { display: none !important; }
-html.ytm-tauri-synced-lyrics ${TAB} > #${CONTAINER_ID} { display: block !important; height: 100%; }
-html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
+/* hide static lyrics */
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *:not(#${CONTAINER_ID}),
+#tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *:not(#${CONTAINER_ID}),
+#tab-renderer > ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *:not(#${CONTAINER_ID}),
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] ytmusic-description-shelf-renderer,
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] ytmusic-music-description-shelf-renderer,
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] yt-formatted-string.description {
+  display: none !important;
+}
+
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
+#tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
+#tab-renderer > ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
 #${CONTAINER_ID} {
-  height: 100%;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  min-height: 400px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  position: relative !important;
+  z-index: 10 !important;
+  background: transparent !important;
+}
+
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'],
+#tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] {
+  scrollbar-width: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+}
+
+#tabsContent > tp-yt-paper-tab,
+#tabsContent > .tab-header {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+@property --lyrics-duration {
+  syntax: '<time>';
+  inherits: false;
+  initial-value: 2s;
+}
+
+:root {
+  /* layout */
+  --global-margin: 0.7rem;
+  --lyrics-padding: 0;
+
+  /* typography */
   --lyrics-font-family: Satoshi, Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem);
+  --lyrics-line-height: var(--ytmusic-body-line-height, 1.5);
+  --lyrics-width: 100%;
+
+  /* inactive lyrics */
+  --lyrics-inactive-font-weight: 400;
+  --lyrics-inactive-opacity: 0.33;
+  --lyrics-inactive-scale: 1;
+  --lyrics-inactive-offset: 0;
+
+  /* active lyrics */
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1;
+  --lyrics-active-offset: 0;
+
+  --lyrics-duration: 2s;
+
+  /* animations */
+  --lyrics-animations: lyrics-glow var(--lyrics-glow-duration, 2s) forwards, lyrics-wobble var(--lyrics-wobble-duration, 1s) forwards;
+  --lyrics-scale-duration: 0.166s;
+  --lyrics-opacity-transition: 0.33s;
+  --lyrics-glow-duration: var(--lyrics-duration, 2s);
+  --lyrics-wobble-duration: calc(var(--lyrics-duration, 2s) / 2);
+
+  /* colors */
+  --glow-color: rgba(255, 255, 255, 0.5);
+}
+
+/* line effects */
+html[data-lyrics-effect="fancy"], :root[data-lyrics-effect="fancy"] {
   --lyrics-font-size: 3rem;
   --lyrics-line-height: 1.333;
   --lyrics-width: 100%;
-  --lyrics-padding: 2rem;
-  --lyrics-inactive-weight: 700;
-  --lyrics-inactive-opacity: .33;
-  --lyrics-inactive-scale: .95;
-  --lyrics-active-weight: 700;
+  --lyrics-padding: 1.5rem;
+  --lyrics-inactive-font-weight: 700;
+  --lyrics-inactive-opacity: 0.33;
+  --lyrics-inactive-scale: 0.95;
+  --lyrics-inactive-offset: 0;
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1;
+  --lyrics-active-offset: 0;
+  --lyrics-animations: lyrics-glow var(--lyrics-glow-duration, 2s) forwards, lyrics-wobble var(--lyrics-wobble-duration, 1s) forwards;
+}
+
+html[data-lyrics-effect="scale"], :root[data-lyrics-effect="scale"] {
+  --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem);
+  --lyrics-width: 83%;
+  --lyrics-padding: 0;
+  --lyrics-animations: none;
+  --lyrics-inactive-font-weight: 400;
+  --lyrics-inactive-opacity: 0.33;
+  --lyrics-inactive-scale: 1;
+  --lyrics-inactive-offset: 0;
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1.2;
+  --lyrics-active-offset: 0;
+}
+
+html[data-lyrics-effect="offset"], :root[data-lyrics-effect="offset"] {
+  --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem);
+  --lyrics-width: 100%;
+  --lyrics-padding: 0;
+  --lyrics-animations: none;
+  --lyrics-inactive-font-weight: 400;
+  --lyrics-inactive-opacity: 0.33;
+  --lyrics-inactive-scale: 1;
+  --lyrics-inactive-offset: 0;
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1;
+  --lyrics-active-offset: 5%;
+}
+
+html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
+  --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem);
+  --lyrics-width: 100%;
+  --lyrics-padding: 0;
+  --lyrics-animations: none;
+  --lyrics-inactive-font-weight: 400;
+  --lyrics-inactive-opacity: 0.33;
+  --lyrics-inactive-scale: 1;
+  --lyrics-inactive-offset: 0;
+  --lyrics-active-font-weight: 700;
   --lyrics-active-opacity: 1;
   --lyrics-active-scale: 1;
   --lyrics-active-offset: 0;
 }
-#${CONTAINER_ID}[data-effect="scale"] { --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem); --lyrics-line-height: var(--ytmusic-body-line-height); --lyrics-width: 83%; --lyrics-padding: 0; --lyrics-inactive-weight: 400; --lyrics-inactive-scale: 1; --lyrics-active-scale: 1.2; }
-#${CONTAINER_ID}[data-effect="offset"] { --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem); --lyrics-line-height: var(--ytmusic-body-line-height); --lyrics-padding: 0; --lyrics-inactive-weight: 400; --lyrics-inactive-scale: 1; --lyrics-active-offset: 5%; }
-#${CONTAINER_ID}[data-effect="focus"] { --lyrics-font-size: clamp(1.4rem, 1.1vmax, 3rem); --lyrics-line-height: var(--ytmusic-body-line-height); --lyrics-padding: 0; --lyrics-inactive-weight: 400; --lyrics-inactive-scale: 1; }
-.ytm-sl-root { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.ytm-sl-picker-wrap { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(5px); background: linear-gradient(to bottom, rgba(3,3,3,.72), rgba(3,3,3,.34), transparent); transition: transform 325ms ease-in-out; }
-.ytm-sl-picker { height: 5em; display: flex; align-items: center; justify-content: space-around; padding-block: 1em; box-sizing: border-box; }
-.ytm-sl-picker-button { width: 40px; height: 40px; border: 0; border-radius: 25%; background: transparent; color: var(--ytmusic-text-primary, #fff); display: grid; place-items: center; cursor: pointer; }
-.ytm-sl-picker-button:hover { background: hsla(0,0%,100%,.1); }
-.ytm-sl-picker-center { width: 50%; min-width: 180px; display: flex; flex-direction: column; align-items: center; gap: 7px; }
-.ytm-sl-picker-label { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; font-size: 1.4rem; color: var(--ytmusic-text-primary, #fff); }
-.ytm-sl-status { width: 18px; height: 18px; display: inline-grid; place-items: center; font-size: 15px; }
-.ytm-sl-star { border: 0; background: transparent; color: var(--ytmusic-text-primary, #fff); cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 4px; }
-.ytm-sl-dots { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.ytm-sl-dot { width: 5px; height: 5px; border: 1px solid #6e7c7c7f; border-radius: 50%; background: #000; cursor: pointer; }
-.ytm-sl-dot.current { background: #fff; }
-.ytm-sl-scroll { flex: 1; overflow-y: auto; scrollbar-width: none; padding-top: 4px; }
-.ytm-sl-scroll::-webkit-scrollbar { display: none; }
-.ytm-sl-lines { min-height: 100%; padding: 0 20px 45vh 0; box-sizing: border-box; }
-.ytm-sl-line { width: var(--lyrics-width); margin: .5rem 20px .5rem 0; transition: all .3s ease-in-out; transform-origin: 0 50%; }
-.ytm-sl-text { cursor: pointer; display: flex; flex-direction: column; text-align: left; font-family: var(--lyrics-font-family) !important; font-size: var(--lyrics-font-size) !important; font-weight: var(--lyrics-inactive-weight) !important; line-height: var(--lyrics-line-height) !important; padding: var(--lyrics-padding) 0 var(--lyrics-padding) 1.5rem; scale: var(--lyrics-inactive-scale); translate: 0; transition: scale .166s, translate .3s ease-in-out; color: var(--ytmusic-text-primary, #fff); }
-.ytm-sl-words { opacity: var(--lyrics-inactive-opacity); transition: opacity .33s; }
-.ytm-sl-word { display: inline-block; white-space: pre-wrap; }
-.ytm-sl-line.current .ytm-sl-text { font-weight: var(--lyrics-active-weight) !important; scale: var(--lyrics-active-scale); translate: var(--lyrics-active-offset); }
-.ytm-sl-line.current .ytm-sl-words { opacity: var(--lyrics-active-opacity); }
-#${CONTAINER_ID}[data-effect="fancy"] .ytm-sl-line.current .ytm-sl-word { animation: ytm-sl-glow var(--line-duration, 2s) forwards, ytm-sl-wobble calc(var(--line-duration, 2s) / 2) forwards; }
-.ytm-sl-time { color: var(--ytmusic-text-secondary, #aaa); font-size: .42em; font-weight: 500; margin-bottom: .25rem; }
-.ytm-sl-romaji { color: var(--ytmusic-text-secondary, #aaa); font-size: .7em; font-style: italic; margin-top: .25rem; }
-.ytm-sl-message { padding: 48px 24px; color: var(--ytmusic-text-secondary, #aaa); font-size: 1.6rem; line-height: 1.5; text-align: center; }
-.ytm-sl-error { color: #ff8a80; }
-.ytm-sl-retry { display: block; margin: 16px auto 0; border: 0; border-radius: 18px; padding: 8px 16px; background: rgba(255,255,255,.12); color: #fff; cursor: pointer; }
-@keyframes ytm-sl-wobble { 0%,100% { transform: translateY(0); } 33.33% { transform: translateY(1.75px); } 66.66% { transform: translateY(-1.75px); } }
-@keyframes ytm-sl-glow { from { text-shadow: 0 0 1.5rem rgba(255,255,255,.5); } to { text-shadow: 0 0 0 rgba(255,255,255,0); } }
+
+.lyrics-renderer {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  min-height: 400px !important;
+  width: 100% !important;
+}
+
+.lyrics-picker-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  background: linear-gradient(to bottom, rgba(10,10,10,0.9), rgba(10,10,10,0.5), transparent);
+  transform: translateY(var(--lyrics-picker-top, -60px));
+  opacity: var(--lyrics-picker-opacity, 0);
+  pointer-events: var(--lyrics-picker-pointer, none);
+  transition: transform 280ms cubic-bezier(0.25, 1, 0.5, 1), opacity 220ms ease-in-out;
+}
+
+.lyrics-picker {
+  height: 4.5em;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-around;
+  padding-block: 0.6em;
+  box-sizing: border-box;
+}
+
+.lyrics-picker-left,
+.lyrics-picker-right {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background-color 0.3s ease;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 0;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1.4rem;
+}
+.lyrics-picker-left:hover,
+.lyrics-picker-right:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.lyrics-picker-content {
+  display: flex;
+  width: 50%;
+  min-width: 180px;
+  flex-direction: column;
+  justify-content: space-around;
+  align-items: center;
+  gap: 4px;
+}
+
+.lyrics-picker-content-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.lyrics-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.lyrics-picker-star {
+  border: 0;
+  background: transparent;
+  color: #ffca28;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.lyrics-picker-status {
+  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+}
+.lyrics-picker-status.done { color: #81c784; }
+.lyrics-picker-status.fetching { color: #ffb74d; }
+.lyrics-picker-status.error { color: #e57373; }
+.lyrics-picker-status.warning { color: #ffb74d; }
+
+.lyrics-picker-content-dots {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lyrics-picker-dot {
+  display: inline-block;
+  cursor: pointer;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.4);
+  background: transparent;
+  transition: background 0.2s, transform 0.2s;
+}
+.lyrics-picker-dot.active {
+  background: #ffffff;
+  border-color: #ffffff;
+  transform: scale(1.2);
+}
+
+.synced-lyrics-vlist {
+  flex: 1 1 auto !important;
+  display: block !important;
+  height: 100% !important;
+  min-height: 350px !important;
+  overflow-y: auto !important;
+  scrollbar-width: none !important;
+  padding: 16px 12px 50vh 12px !important;
+  box-sizing: border-box !important;
+}
+.synced-lyrics-vlist::-webkit-scrollbar { display: none; }
+
+.synced-line {
+  width: var(--lyrics-width, 100%);
+  margin: var(--global-margin) 0;
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+  display: block;
+}
+
+.synced-line .text-lyrics {
+  cursor: pointer;
+  padding-left: 1.5rem;
+}
+
+.text-lyrics {
+  font-family: var(--lyrics-font-family) !important;
+  font-size: var(--lyrics-font-size) !important;
+  font-weight: var(--lyrics-inactive-font-weight) !important;
+  line-height: var(--lyrics-line-height) !important;
+  padding-top: var(--lyrics-padding);
+  padding-bottom: var(--lyrics-padding);
+  scale: var(--lyrics-inactive-scale);
+  translate: var(--lyrics-inactive-offset);
+  transition: scale var(--lyrics-scale-duration), translate 0.3s ease-in-out, opacity var(--lyrics-opacity-transition);
+  display: block;
+  text-align: left;
+  transform-origin: 0 50%;
+  color: #ffffff !important;
+}
+
+.text-lyrics > span > span {
+  display: inline-block;
+  white-space: pre-wrap;
+  opacity: var(--lyrics-inactive-opacity);
+  transition: opacity var(--lyrics-opacity-transition);
+  color: #ffffff !important;
+}
+
+.synced-line.current .text-lyrics {
+  font-weight: var(--lyrics-active-font-weight) !important;
+  scale: var(--lyrics-active-scale);
+  translate: var(--lyrics-active-offset);
+  color: #ffffff !important;
+}
+
+.synced-line.current .text-lyrics > span > span {
+  opacity: var(--lyrics-active-opacity);
+  animation: var(--lyrics-animations);
+  color: #ffffff !important;
+}
+
+.text-lyrics > .romaji {
+  color: var(--ytmusic-text-secondary, rgba(255, 255, 255, 0.7)) !important;
+  font-size: calc(var(--lyrics-font-size) * 0.7) !important;
+  font-style: italic !important;
+  display: block;
+  margin-top: 4px;
+}
+
+.text-lyrics > .timecode {
+  color: var(--ytmusic-text-secondary, rgba(255, 255, 255, 0.5));
+  font-size: 0.45em;
+  font-weight: 500;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.kaomoji-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  width: 100%;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: var(--lyrics-font-family);
+  font-size: 2rem;
+  user-select: none;
+  text-align: center;
+}
+
+.error-container {
+  padding: 24px;
+  margin-bottom: 5%;
+}
+.error-box {
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 12px;
+  color: #ff8a80;
+  font-family: monospace;
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.retry-btn {
+  margin-top: 14px;
+  border: 0;
+  border-radius: 18px;
+  padding: 8px 20px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+@keyframes lyrics-wobble {
+  from { transform: translateY(0px); }
+  33.33% { transform: translateY(1.75px); }
+  66.66% { transform: translateY(-1.75px); }
+  to { transform: translateY(0px); }
+}
+
+@keyframes lyrics-glow {
+  0% { text-shadow: 0 0 1.5rem var(--glow-color); }
+  to { text-shadow: 0 0 0 var(--glow-color); }
+}
+
+.line-seek-pulse {
+  animation: line-seek-flash 0.4s ease-out !important;
+}
+
+@keyframes line-seek-flash {
+  0% {
+    transform: scale(1.05);
+    filter: brightness(1.8) drop-shadow(0 0 14px rgba(255, 255, 255, 0.9));
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1) drop-shadow(0 0 0 transparent);
+  }
+}
+
+.synced-line.instrumental .text-lyrics {
+  opacity: 0.5;
+  letter-spacing: 0.2em;
+}
+
+.synced-line.instrumental.current .text-lyrics {
+  opacity: 1;
+  animation: pulse-note 1.8s infinite ease-in-out;
+}
+
+@keyframes pulse-note {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.15); filter: brightness(1.4) drop-shadow(0 0 10px var(--glow-color, rgba(255,255,255,0.7))); }
+}
 `;
 
   function installStyle() {
-    if (document.getElementById(STYLE_ID)) return;
-    const style = document.createElement("style");
-    style.id = STYLE_ID;
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID;
+      const target = document.head || document.documentElement || document.body;
+      if (target) {
+        target.appendChild(style);
+      } else {
+        document.addEventListener("DOMContentLoaded", () => {
+          const t = document.head || document.documentElement || document.body;
+          if (t && !document.getElementById(STYLE_ID)) t.appendChild(style);
+        }, { once: true });
+      }
+    }
     style.textContent = styles;
-    document.documentElement.appendChild(style);
   }
 
-  function currentVideoId() {
-    try {
-      const urlId = new URL(location.href).searchParams.get("v");
-      if (urlId) return urlId;
-    } catch {}
-    const anchor = document.querySelector("ytmusic-player-bar a[href*='watch'][href*='v=']");
-    try {
-      return anchor ? new URL(anchor.href, location.href).searchParams.get("v") : null;
-    } catch {
-      return null;
+  function getLyricsTabHeader() {
+    const tabs = document.querySelectorAll(
+      "#tabsContent > tp-yt-paper-tab, #tabsContent > .tab-header, ytmusic-player-page #tabsContent tp-yt-paper-tab, #tab-header"
+    );
+    for (const tab of tabs) {
+      if (/lyrics/i.test(tab.textContent || "")) return tab;
     }
+    return document.querySelector("#tabsContent > .tab-header:nth-of-type(2), #tabsContent > tp-yt-paper-tab:nth-of-type(2)");
+  }
+
+  function getLyricsTabRenderer() {
+    return document.querySelector(
+      'ytmusic-tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"], #tab-renderer > ytmusic-tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"], #tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"], ytmusic-player-page ytmusic-tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"], ytmusic-player-page #tab-renderer > ytmusic-tab-renderer:nth-of-type(2)'
+    );
+  }
+
+  function cleanSongTitle(title) {
+    if (!title) return "";
+    return title
+      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
+      .replace(/\s*-\s*(official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft).*$/gi, " ")
+      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getPlayer() {
+    return document.querySelector("#movie_player, .html5-video-player, ytmusic-player");
   }
 
   function trackInfo() {
-    const videoId = currentVideoId();
+    const player = getPlayer();
+    const videoData = player?.getVideoData?.();
+    const playerResponse = player?.getPlayerResponse?.();
     const media = runtime.media();
-    const metadata = navigator.mediaSession?.metadata;
-    const title = clean(metadata?.title || document.querySelector("ytmusic-player-bar .title")?.textContent);
-    const artist = clean(metadata?.artist || document.querySelector("ytmusic-player-bar .byline")?.textContent?.split(/[•·]/)[0]);
-    const album = clean(metadata?.album || "");
-    const duration = Number.isFinite(media?.duration) ? media.duration : 0;
-    if (!videoId || !title) return null;
-    return { videoId, title, alternativeTitle: title, artist, album, songDuration: duration };
+
+    let title = clean(
+      videoData?.title ||
+      navigator.mediaSession?.metadata?.title ||
+      document.querySelector("ytmusic-player-bar .title")?.textContent ||
+      document.querySelector("ytmusic-player-bar yt-formatted-string.title")?.textContent
+    );
+    let artist = clean(
+      videoData?.author ||
+      navigator.mediaSession?.metadata?.artist ||
+      document.querySelector("ytmusic-player-bar .byline a")?.textContent ||
+      document.querySelector("ytmusic-player-bar .byline")?.textContent?.split(/[•·]/)[0]
+    );
+    let album = clean(
+      playerResponse?.videoDetails?.album ||
+      navigator.mediaSession?.metadata?.album ||
+      ""
+    );
+    const duration = Number(
+      videoData?.length_seconds ||
+      playerResponse?.videoDetails?.lengthSeconds ||
+      media?.duration ||
+      0
+    );
+    const videoId = videoData?.video_id || new URL(location.href).searchParams.get("v") || (title ? `${artist}-${title}` : "");
+    const alternativeTitle = clean(
+      playerResponse?.microformat?.microformatDataRenderer?.linkAlternates?.find?.((l) => l.title)?.title || ""
+    );
+    const tags = Array.isArray(playerResponse?.microformat?.microformatDataRenderer?.tags)
+      ? playerResponse.microformat.microformatDataRenderer.tags
+      : [];
+
+    if (!title && !videoId) return null;
+
+    return {
+      videoId,
+      title,
+      alternativeTitle,
+      artist,
+      album,
+      songDuration: duration,
+      tags,
+    };
   }
 
   function blankProviderState() {
     return Object.fromEntries(PROVIDERS.map((name) => [name, { state: "fetching", data: null, error: null }]));
   }
 
+  const REMEMBER_KEY = "ytmd-sl-selected-";
+
+  function readRemembered(videoId) {
+    if (!videoId) return null;
+    try {
+      const val = localStorage.getItem(REMEMBER_KEY + videoId) || sessionStorage.getItem(REMEMBER_KEY + videoId);
+      return PROVIDERS.includes(val) ? val : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveRemembered(videoId, provider) {
+    if (!videoId || !provider) return;
+    try {
+      localStorage.setItem(REMEMBER_KEY + videoId, provider);
+      sessionStorage.setItem(REMEMBER_KEY + videoId, provider);
+    } catch {}
+  }
+
   function ensureTrack(info) {
     let entry = CACHE.get(info.videoId);
     if (!entry) {
-      entry = { status: "loading", providers: blankProviderState() };
+      const starred = readStarred(info.videoId);
+      const remembered = readRemembered(info.videoId);
+      const initialProvider = starred || remembered || PROVIDERS[0];
+      entry = {
+        status: "loading",
+        providers: blankProviderState(),
+        selectedProvider: initialProvider,
+      };
       CACHE.set(info.videoId, entry);
+      currentProvider = initialProvider;
       for (const name of PROVIDERS) fetchProvider(name, info, entry);
+    } else if (entry.selectedProvider) {
+      currentProvider = entry.selectedProvider;
     }
     return entry;
   }
 
   async function fetchProvider(name, info, entry) {
     const provider = entry.providers[name];
+    if (provider.state === "done" && provider.data) {
+      return;
+    }
     provider.state = "fetching";
     provider.data = null;
     provider.error = null;
@@ -141,7 +613,9 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
       provider.error = error instanceof Error ? error : new Error(String(error));
     }
     entry.status = PROVIDERS.every((providerName) => entry.providers[providerName].state !== "fetching") ? "done" : "loading";
-    autoPickProvider();
+    if (!entry.selectedProvider || !usable(entry.selectedProvider)) {
+      autoPickProvider();
+    }
     render();
   }
 
@@ -164,13 +638,29 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
     const starred = readStarred(activeTrack.videoId);
     if (starred && usable(starred)) {
       currentProvider = starred;
+      const entry = CACHE.get(activeTrack.videoId);
+      if (entry) entry.selectedProvider = currentProvider;
+      saveRemembered(activeTrack.videoId, currentProvider);
+      return;
+    }
+    const remembered = readRemembered(activeTrack.videoId);
+    if (remembered && usable(remembered)) {
+      currentProvider = remembered;
+      const entry = CACHE.get(activeTrack.videoId);
+      if (entry) entry.selectedProvider = currentProvider;
       return;
     }
     const available = PROVIDERS.filter(usable).sort((a, b) => providerBias(b) - providerBias(a));
-    if (available.length && providerBias(available[0]) > providerBias(currentProvider)) currentProvider = available[0];
+    if (available.length && (providerBias(available[0]) > providerBias(currentProvider) || !usable(currentProvider))) {
+      currentProvider = available[0];
+      const entry = CACHE.get(activeTrack.videoId);
+      if (entry) entry.selectedProvider = currentProvider;
+      saveRemembered(activeTrack.videoId, currentProvider);
+    }
   }
 
   function readStarred(videoId) {
+    if (!videoId) return null;
     try {
       const value = JSON.parse(localStorage.getItem(STAR_KEY + videoId) || "null");
       return PROVIDERS.includes(value?.provider) ? value.provider : null;
@@ -182,25 +672,161 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
   function toggleStar() {
     if (!activeTrack) return;
     const key = STAR_KEY + activeTrack.videoId;
-    if (readStarred(activeTrack.videoId) === currentProvider) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify({ provider: currentProvider }));
+    if (readStarred(activeTrack.videoId) === currentProvider) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify({ provider: currentProvider }));
+    }
+    const entry = CACHE.get(activeTrack.videoId);
+    if (entry) entry.selectedProvider = currentProvider;
+    saveRemembered(activeTrack.videoId, currentProvider);
     render();
   }
 
   function selectProvider(index, manual = true) {
     currentProvider = PROVIDERS[(index + PROVIDERS.length) % PROVIDERS.length];
     if (manual) manuallySwitched = true;
+    if (activeTrack) {
+      const entry = CACHE.get(activeTrack.videoId);
+      if (entry) entry.selectedProvider = currentProvider;
+      saveRemembered(activeTrack.videoId, currentProvider);
+    }
     render();
   }
 
   function providerSearch(name, info) {
     switch (name) {
-      case "YTMusic": return fetchYtmLyrics(info);
       case "LRCLib": return fetchLrcLib(info);
+      case "YTMusic": return fetchYtmLyrics(info);
       case "MusixMatch": return fetchMusixMatch(info);
+      case "Megalobiz": return fetchMegalobiz(info);
       case "LyricsGenius": return fetchGenius(info);
       default: return Promise.resolve(null);
     }
+  }
+
+  async function directFetchJson(url) {
+    try {
+      const res = await window.fetch(url);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // fallback
+    }
+    return requestJson(url);
+  }
+
+  async function fetchLrcLib(info) {
+    let query = new URLSearchParams({
+      artist_name: info.artist,
+      track_name: info.title,
+    });
+    if (info.album) {
+      query.set("album_name", info.album);
+    }
+
+    let url = `https://lrclib.net/api/search?${query.toString()}`;
+    let data = await directFetchJson(url);
+
+    if (!Array.isArray(data) || data.length === 0) {
+      const trackName = info.alternativeTitle || info.title;
+      query = new URLSearchParams({ q: trackName });
+      url = `https://lrclib.net/api/search?${query.toString()}`;
+      data = await directFetchJson(url);
+
+      if ((!Array.isArray(data) || data.length === 0) && info.alternativeTitle) {
+        query = new URLSearchParams({ q: info.title });
+        url = `https://lrclib.net/api/search?${query.toString()}`;
+        data = await directFetchJson(url);
+      }
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      const cleanTitle = cleanSongTitle(info.title);
+      if (cleanTitle && cleanTitle !== info.title) {
+        query = new URLSearchParams({ q: `${info.artist} ${cleanTitle}` });
+        url = `https://lrclib.net/api/search?${query.toString()}`;
+        data = await directFetchJson(url);
+      }
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+
+    const filteredResults = [];
+    for (const item of data) {
+      const { artistName } = item;
+      if (!artistName) continue;
+
+      const artists = info.artist.split(/[&,]/g).map((i) => i.trim());
+      const itemArtists = artistName.split(/[&,]/g).map((i) => i.trim());
+
+      const permutations = [];
+      for (const artistA of artists) {
+        for (const artistB of itemArtists) {
+          permutations.push([artistA.toLowerCase(), artistB.toLowerCase()]);
+        }
+      }
+      for (const artistA of itemArtists) {
+        for (const artistB of artists) {
+          permutations.push([artistA.toLowerCase(), artistB.toLowerCase()]);
+        }
+      }
+
+      let ratio = Math.max(...permutations.map(([x, y]) => jaroWinkler(x, y)));
+
+      if (ratio <= 0.85 && info.tags && info.tags.length > 0) {
+        const filteredTags = info.tags.filter((tag) => tag.toLowerCase() !== info.artist.toLowerCase());
+        const tagPermutations = [];
+        for (const tag of filteredTags) {
+          for (const itemArtist of itemArtists) {
+            tagPermutations.push([tag.toLowerCase(), itemArtist.toLowerCase()]);
+          }
+        }
+        for (const itemArtist of itemArtists) {
+          for (const tag of filteredTags) {
+            tagPermutations.push([itemArtist.toLowerCase(), tag.toLowerCase()]);
+          }
+        }
+        if (tagPermutations.length > 0) {
+          const tagRatio = Math.max(...tagPermutations.map(([x, y]) => jaroWinkler(x, y)));
+          ratio = Math.max(ratio, tagRatio);
+        }
+      }
+
+      if (ratio <= 0.85) continue;
+      filteredResults.push(item);
+    }
+
+    if (!filteredResults.length && data.length > 0) {
+      filteredResults.push(...data.filter((item) => !item.instrumental && (item.syncedLyrics || item.plainLyrics)));
+    }
+
+    filteredResults.sort((a, b) => {
+      const left = Math.abs((a.duration || 0) - info.songDuration);
+      const right = Math.abs((b.duration || 0) - info.songDuration);
+      return left - right;
+    });
+
+    const closestResult = filteredResults[0];
+    if (!closestResult) return null;
+    if (info.songDuration > 0 && Math.abs(closestResult.duration - info.songDuration) > 20) {
+      if (!closestResult.syncedLyrics && !closestResult.plainLyrics) return null;
+    }
+    if (closestResult.instrumental) return null;
+
+    const raw = closestResult.syncedLyrics;
+    const plain = closestResult.plainLyrics;
+    if (!raw && !plain) return null;
+
+    return {
+      title: closestResult.trackName || info.title,
+      artists: closestResult.artistName ? closestResult.artistName.split(/[&,]/g) : [info.artist],
+      lines: raw ? parseLrc(raw).lines : null,
+      lyrics: plain || null,
+    };
   }
 
   async function fetchYtmLyrics(info) {
@@ -242,98 +868,147 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
     return { title: info.title, artists: [info.artist], lines, lyrics };
   }
 
-  async function fetchLrcLib(info) {
-    const query = new URLSearchParams({ artist_name: info.artist, track_name: info.title });
-    if (info.album) query.set("album_name", info.album);
-    let data = await requestJson(`https://lrclib.net/api/search?${query}`);
-    if ((!Array.isArray(data) || data.length === 0) && config().lyrics_show_inexact) {
-      data = await requestJson(`https://lrclib.net/api/search?${new URLSearchParams({ q: info.alternativeTitle || info.title })}`);
-      if ((!Array.isArray(data) || data.length === 0) && info.alternativeTitle && info.alternativeTitle !== info.title) {
-        data = await requestJson(`https://lrclib.net/api/search?${new URLSearchParams({ q: info.title })}`);
-      }
-    }
-    if (!Array.isArray(data)) return null;
-    const artists = splitArtists(info.artist);
-    const matches = data.filter((item) => {
-      const candidateArtists = splitArtists(item.artistName);
-      return Math.max(...artists.flatMap((left) => candidateArtists.map((right) => jaroWinkler(left.toLowerCase(), right.toLowerCase()))), 0) > 0.9;
+  async function fetchMegalobiz(info) {
+    const query = new URLSearchParams({
+      qry: `${info.artist} ${info.title}`,
     });
-    matches.sort((a, b) => Math.abs(Number(a.duration) - info.songDuration) - Math.abs(Number(b.duration) - info.songDuration));
-    const result = matches[0];
-    if (!result || Math.abs(Number(result.duration) - info.songDuration) > 15 || result.instrumental) return null;
-    if (!result.syncedLyrics && !result.plainLyrics) return null;
+    const searchRes = await runtime.request(`https://www.megalobiz.com/search/all?${query.toString()}`);
+    if (!searchRes?.ok || !searchRes.body) return null;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(searchRes.body, "text/html");
+    const anchors = Array.from(doc.querySelectorAll('a.entity_name[href^="/lrc/maker/"][name][title]'));
+    if (!anchors.length) return null;
+
+    function removeNoise(t) {
+      return String(t || "")
+        .replace(/\[.*?\]/g, "")
+        .replace(/\(.*?\)/g, "")
+        .trim()
+        .replace(/(^[-•])|([-•]$)/g, "")
+        .trim()
+        .replace(/\s+by$/, "");
+    }
+
+    const searchResults = anchors.map((anchor) => {
+      const titleAttr = anchor.getAttribute("title") || "";
+      const match = titleAttr.match(/\[(?<minutes>\d+):(?<seconds>\d+)\.(?<millis>\d+)\]/);
+      if (!match?.groups) return null;
+      const { minutes, seconds, millis } = match.groups;
+      let name = anchor.getAttribute("name") || "";
+      const feat = name.match(/\(?[Ff]eat\. (.+)\)?/)?.[1] || "";
+      const dash = name.match(/(.*?)\s+[-•]\s+(.*)/);
+      const by = name.match(/(.*?)\s+by\s+(.*)/);
+      const artists = [
+        removeNoise(feat),
+        ...(dash ? dash[1].split(/[&,]/).map(removeNoise) : []),
+        ...(by ? by[2].split(/[&,]/).map(removeNoise) : []),
+      ].filter(Boolean);
+
+      for (const art of artists) {
+        name = name.replace(art, "");
+        name = removeNoise(name);
+      }
+
+      return {
+        title: name || anchor.getAttribute("name"),
+        artists,
+        href: anchor.getAttribute("href"),
+        duration: parseInt(minutes, 10) * 60 + parseInt(seconds, 10) + (parseInt(millis, 10) / 1000),
+      };
+    }).filter(Boolean);
+
+    if (!searchResults.length) return null;
+    searchResults.sort((a, b) => Math.abs(a.duration - info.songDuration) - Math.abs(b.duration - info.songDuration));
+    const closest = searchResults[0];
+    if (!closest || (info.songDuration > 0 && Math.abs(closest.duration - info.songDuration) > 20)) {
+      return null;
+    }
+
+    const pageRes = await runtime.request(`https://www.megalobiz.com${closest.href}`);
+    if (!pageRes?.ok || !pageRes.body) return null;
+    const lyricsDoc = parser.parseFromString(pageRes.body, "text/html");
+    const raw = lyricsDoc.querySelector('span[id^="lrc_"][id$="_lyrics"]')?.textContent;
+    if (!raw) return null;
+
+    const parsed = parseLrc(raw);
     return {
-      title: result.trackName,
-      artists: splitArtists(result.artistName),
-      lines: result.syncedLyrics ? parseLrc(result.syncedLyrics).lines : null,
-      lyrics: result.plainLyrics || null,
+      title: closest.title || info.title,
+      artists: closest.artists.length ? closest.artists : [info.artist],
+      lines: parsed.lines?.length ? parsed.lines : null,
+      lyrics: raw,
     };
   }
 
   async function fetchGenius(info) {
-    const query = new URLSearchParams({ q: `${info.artist} ${info.title}`, page: "1", per_page: "10" });
-    const data = await requestJson(`https://genius.com/api/search/song?${query}`);
-    const hits = data?.response?.sections?.[0]?.hits;
-    if (!Array.isArray(hits) || !hits.length) return null;
-    hits.sort((a, b) => geniusPoints(b.result, info) - geniusPoints(a.result, info));
-    const result = hits[0]?.result;
-    if (!result || result.primary_artist?.url === "https://genius.com/artists/Deleted-artist") return null;
-    const response = await runtime.request(`https://genius.com${result.path}`);
-    if (!response?.ok || !response.body) return null;
-    const doc = new DOMParser().parseFromString(response.body, "text/html");
-    const script = [...doc.querySelectorAll("script")].find((node) => node.textContent?.includes("window.__PRELOADED_STATE__"));
-    const raw = script?.textContent?.match(/__PRELOADED_STATE__ = JSON\.parse\('(.*?)'\);/)?.[1]?.replace(/\\"/g, '"');
-    const html = raw?.match(/body\":\{\"html\":\"(.*?)\",\"children\"/)?.[1]
-      ?.replace(/\\\//g, "/")
-      ?.replace(/\\\\/g, "\\")
-      ?.replace(/\\n/g, "\n")
-      ?.replace(/\\'/g, "'")
-      ?.replace(/\\"/g, '"');
-    if (!html) return /lyricsPlaceholderReason.{1,5}unreleased/.test(raw || "") ? null : null;
-    const lyricsDoc = new DOMParser().parseFromString(html, "text/html");
-    const lyrics = lyricsDoc.body.innerText;
-    if (lyrics.trim().toLowerCase().replace(/[\[\]]/g, "") === "instrumental") return null;
-    return { title: result.title, artists: result.primary_artists?.map((artist) => artist.name) || [info.artist], lines: null, lyrics };
+    const query = new URLSearchParams({ q: `${info.artist} ${info.title}` });
+    const search = await requestJson(`https://genius.com/api/search/multi?${query}`);
+    const sections = search?.response?.sections || [];
+    const hits = sections.flatMap((section) => (section.type === "song" ? section.hits || [] : []));
+    if (!hits.length) return null;
+    hits.sort((left, right) => geniusPoints(right.result, info) - geniusPoints(left.result, info));
+    const hit = hits[0]?.result;
+    if (!hit?.path) return null;
+    const page = await runtime.request(`https://genius.com${hit.path}`);
+    if (!page?.ok || !page.body) return null;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(page.body, "text/html");
+    const containers = doc.querySelectorAll('[data-lyrics-container="true"]');
+    if (!containers.length) return null;
+    const text = Array.from(containers)
+      .map((item) => item.textContent?.replace(/\n\n+/g, "\n") || "")
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    return { title: hit.title || info.title, artists: [hit.primary_artist?.name || info.artist], lines: null, lyrics: text || null };
   }
 
   async function fetchMusixMatch(info) {
-    await ensureMusixMatchToken();
+    await initMusixmatch();
     if (!musixmatchToken) return null;
     const params = new URLSearchParams({
       app_id: "web-desktop-app-v1.0",
-      format: "json",
       usertoken: musixmatchToken,
-      q_track: info.alternativeTitle || info.title,
+      q_track: info.title,
       q_artist: info.artist,
-      q_duration: String(info.songDuration),
-      namespace: "lyrics_richsynched",
-      subtitle_format: "lrc",
+      page_size: "5",
     });
-    if (info.album) params.set("q_album", info.album);
-    let response = await musixmatchRequest(`macro.subtitles.get?${params}`);
-    let parsed = response?.body ? JSON.parse(response.body) : null;
-    if (parsed?.message?.header?.status_code === 401) {
-      musixmatchToken = null;
-      musixmatchTokenExpires = 0;
-      await ensureMusixMatchToken();
-      params.set("usertoken", musixmatchToken || "");
-      response = await musixmatchRequest(`macro.subtitles.get?${params}`);
-      parsed = response?.body ? JSON.parse(response.body) : null;
+    const search = await musixmatchRequest(`track.search?${params}`);
+    const trackList = search?.body ? JSON.parse(search.body)?.message?.body?.track_list : [];
+    if (!Array.isArray(trackList) || !trackList.length) return null;
+    const track = trackList
+      .map((item) => item.track)
+      .sort((left, right) => jaroWinkler(right.track_name, info.title) - jaroWinkler(left.track_name, info.title))[0];
+    if (!track?.track_id) return null;
+
+    let lines = null;
+    if (track.has_subtitles) {
+      const subParams = new URLSearchParams({
+        app_id: "web-desktop-app-v1.0",
+        usertoken: musixmatchToken,
+        track_id: String(track.track_id),
+        subtitle_format: "lrc",
+      });
+      const sub = await musixmatchRequest(`track.subtitle.get?${subParams}`);
+      const body = sub?.body ? JSON.parse(sub.body)?.message?.body?.subtitle?.subtitle_body : "";
+      if (body) lines = parseLrc(body).lines;
     }
-    const calls = parsed?.message?.body?.macro_calls;
-    const track = calls?.["matcher.track.get"]?.message?.body?.track;
-    if (!track || track.track_id === 115264642) return null;
-    const lyrics = calls?.["track.lyrics.get"]?.message?.body?.lyrics?.lyrics_body || null;
-    const subtitle = calls?.["track.subtitles.get"]?.message?.body?.subtitle_list?.[0]?.subtitle?.subtitle_body;
-    return {
-      title: track.track_name,
-      artists: [track.artist_name],
-      lines: subtitle ? parseLrc(subtitle).lines : null,
-      lyrics,
-    };
+
+    let lyrics = null;
+    if (!lines && track.has_lyrics) {
+      const lyricParams = new URLSearchParams({
+        app_id: "web-desktop-app-v1.0",
+        usertoken: musixmatchToken,
+        track_id: String(track.track_id),
+      });
+      const lyricRes = await musixmatchRequest(`track.lyrics.get?${lyricParams}`);
+      lyrics = lyricRes?.body ? JSON.parse(lyricRes.body)?.message?.body?.lyrics?.lyrics_body : null;
+    }
+
+    if (!lines && !lyrics) return null;
+    return { title: track.track_name || info.title, artists: [track.artist_name || info.artist], lines, lyrics };
   }
 
-  async function ensureMusixMatchToken() {
+  async function initMusixmatch() {
     if (musixmatchToken && musixmatchTokenExpires > Date.now()) return;
     const params = new URLSearchParams({ app_id: "web-desktop-app-v1.0" });
     const response = await musixmatchRequest(`token.get?${params}`);
@@ -354,52 +1029,96 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
   async function requestJson(url, init) {
     const response = await runtime.request(url, init);
     if (!response?.ok || !response.body) return null;
-    return JSON.parse(response.body);
+    try {
+      return JSON.parse(response.body);
+    } catch {
+      return null;
+    }
   }
 
   function geniusPoints(result, info) {
     return (result?.title === info.title ? 1 : 0) + (result?.primary_artist?.name?.includes(info.artist) ? 1 : 0);
   }
 
-  function splitArtists(value) {
-    return clean(value).split(/[&,]/).map(clean).filter(Boolean);
-  }
-
   function parseLrc(text) {
     const lines = [];
     const tags = [];
     let offset = 0;
-    const timestamp = /^\[(?<minutes>\d+):(?<seconds>\d+)\.(?<fraction>\d+)\]/;
-    const tag = /^\[(?<tag>\w+):\s*(?<value>.+?)\s*\]$/;
-    const word = /<(?<minutes>\d+):(?<seconds>\d+)\.(?<fraction>\d+)>\s*(?<word>\S+)/g;
+    const timestampRegex = /^\[(?<minutes>\d+):(?<seconds>\d+)\.(?<centiseconds>\d+)\]/m;
+    const tagRegex = /^\[(?<tag>\w+):\s*(?<value>.+?)\s*\]$/;
+    const wordRegex = /<(?<minutes>\d+):(?<seconds>\d+)\.(?<centiseconds>\d+)>\s*(?<word>\S+)/g;
+
     for (let raw of String(text || "").split("\n")) {
       raw = raw.trim();
       if (!raw.startsWith("[")) continue;
-      const times = [];
+      const timestamps = [];
       let match;
-      while ((match = raw.match(timestamp)?.groups)) {
-        const timeInMs = toMs(match.minutes, match.seconds, match.fraction);
-        times.push({ time: `${match.minutes}:${match.seconds}.${match.fraction}`, timeInMs });
-        raw = raw.replace(timestamp, "");
+      while ((match = raw.match(timestampRegex)?.groups)) {
+        const { minutes, seconds, centiseconds } = match;
+        const timeInMs =
+          parseInt(minutes, 10) * 60 * 1000 +
+          parseInt(seconds, 10) * 1000 +
+          parseInt(centiseconds.padEnd(3, "0"), 10);
+        timestamps.push({
+          time: `${minutes}:${seconds}.${centiseconds}`,
+          timeInMs,
+        });
+        raw = raw.replace(timestampRegex, "");
       }
-      if (!times.length) {
-        const meta = raw.match(tag)?.groups;
-        if (meta?.tag === "offset") offset = Number.parseInt(meta.value, 10) || 0;
-        else if (meta) tags.push({ tag: meta.tag, value: meta.value });
+
+      if (!timestamps.length) {
+        const tag = raw.match(tagRegex)?.groups;
+        if (tag) {
+          if (tag.tag === "offset") offset = parseInt(tag.value, 10) || 0;
+          else tags.push({ tag: tag.tag, value: tag.value });
+        }
         continue;
       }
-      const words = [...raw.matchAll(word)].map((item) => ({ timeInMs: toMs(item.groups.minutes, item.groups.seconds, item.groups.fraction), word: item.groups.word }));
-      const lyricText = words.length ? words.map((item) => item.word).join(" ") : raw.trim();
-      for (const item of times) lines.push({ ...item, timeInMs: item.timeInMs + offset, duration: Infinity, text: lyricText, words });
-    }
-    lines.sort((a, b) => a.timeInMs - b.timeInMs);
-    for (let index = 0; index < lines.length - 1; index++) lines[index].duration = Math.max(0, lines[index + 1].timeInMs - lines[index].timeInMs);
-    if (lines[0]?.timeInMs > 300) lines.unshift({ time: "00:00.00", timeInMs: 0, duration: lines[0].timeInMs, text: "", words: [] });
-    return { tags, lines };
-  }
 
-  function toMs(minutes, seconds, fraction) {
-    return Number.parseInt(minutes, 10) * 60_000 + Number.parseInt(seconds, 10) * 1_000 + Number.parseInt(String(fraction).padEnd(3, "0").slice(0, 3), 10);
+      let lineText = raw.trim();
+      const words = Array.from(lineText.matchAll(wordRegex), ({ groups }) => {
+        const { minutes, seconds, centiseconds, word } = groups;
+        const timeInMs =
+          parseInt(minutes, 10) * 60 * 1000 +
+          parseInt(seconds, 10) * 1000 +
+          parseInt(centiseconds.padEnd(3, "0"), 10);
+        return { timeInMs, word };
+      });
+
+      if (words.length) {
+        lineText = words.map(({ word }) => word).join(" ");
+      }
+
+      for (const { time, timeInMs } of timestamps) {
+        lines.push({
+          time,
+          timeInMs,
+          text: lineText,
+          words,
+          duration: Infinity,
+        });
+      }
+    }
+
+    lines.sort((a, b) => a.timeInMs - b.timeInMs);
+    for (let i = 0; i < lines.length; i++) {
+      lines[i].timeInMs += offset;
+      if (lines[i + 1]) {
+        lines[i].duration = Math.max(0, lines[i + 1].timeInMs - lines[i].timeInMs);
+      }
+    }
+
+    if (lines[0]?.timeInMs > 300) {
+      lines.unshift({
+        time: "00:00.00",
+        timeInMs: 0,
+        duration: lines[0].timeInMs,
+        text: "",
+        words: [],
+      });
+    }
+
+    return { tags, lines };
   }
 
   function formatTime(ms) {
@@ -438,119 +1157,194 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
   }
 
   function ensureContainer() {
-    const tab = document.querySelector(TAB);
-    if (!tab) return null;
-    let container = tab.querySelector(`#${CONTAINER_ID}`);
+    let container = document.getElementById(CONTAINER_ID);
+    if (container && document.body.contains(container)) return container;
+
+    const tabRenderer = getLyricsTabRenderer();
+    if (!tabRenderer) return null;
+
     if (!container) {
       container = document.createElement("div");
       container.id = CONTAINER_ID;
-      tab.appendChild(container);
     }
-    container.dataset.effect = config().lyrics_line_effect || "fancy";
+    tabRenderer.appendChild(container);
     return container;
   }
 
-  function forceLyricsTab() {
-    const header = document.querySelector(HEADER);
+  function setupHeaderObserver() {
+    const header = getLyricsTabHeader();
     if (!header) return;
+
     header.removeAttribute("disabled");
+    header.removeAttribute("aria-disabled");
+
+    if (!header.__ytmSlBound) {
+      header.__ytmSlBound = true;
+      header.addEventListener("click", () => {
+        setTimeout(render, 50);
+        setTimeout(render, 300);
+      });
+    }
+
+    if (!headerObserver) {
+      headerObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.attributeName === "disabled") {
+            header.removeAttribute("disabled");
+            header.removeAttribute("aria-disabled");
+          } else if (mutation.attributeName === "aria-selected") {
+            render();
+          }
+        }
+      });
+      headerObserver.observe(header, { attributes: true, attributeFilter: ["disabled", "aria-selected"] });
+    }
+  }
+
+  function onUserScroll() {
+    isUserScrolling = true;
+    if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
+    userScrollTimeout = window.setTimeout(() => {
+      isUserScrolling = false;
+    }, 4000);
+  }
+
+  function applyEffect() {
+    const effect = config().lyrics_line_effect || "fancy";
+    if (document?.documentElement?.dataset) {
+      document.documentElement.dataset.lyricsEffect = effect;
+    }
   }
 
   function render() {
     const version = ++renderVersion;
+    applyEffect();
     const container = ensureContainer();
     if (!container) return;
-    container.dataset.effect = config().lyrics_line_effect || "fancy";
+
+    if (activeTrack) {
+      const entry = CACHE.get(activeTrack.videoId);
+      if (entry?.selectedProvider && PROVIDERS.includes(entry.selectedProvider)) {
+        currentProvider = entry.selectedProvider;
+      }
+    }
+
     const current = state()?.[currentProvider];
     const providerIndex = PROVIDERS.indexOf(currentProvider);
     const starred = activeTrack ? readStarred(activeTrack.videoId) : null;
 
-    container.innerHTML = "";
+    container.replaceChildren();
     const root = document.createElement("div");
-    root.className = "ytm-sl-root";
+    root.className = "lyrics-renderer";
+
     const pickerWrap = document.createElement("div");
-    pickerWrap.className = "ytm-sl-picker-wrap";
+    pickerWrap.className = "lyrics-picker-sticky";
     const picker = document.createElement("div");
-    picker.className = "ytm-sl-picker";
+    picker.className = "lyrics-picker";
     picker.append(
-      pickerButton("‹", () => selectProvider(providerIndex - 1)),
+      pickerButton("‹", "lyrics-picker-left", () => selectProvider(providerIndex - 1)),
       pickerCenter(current, starred),
-      pickerButton("›", () => selectProvider(providerIndex + 1)),
+      pickerButton("›", "lyrics-picker-right", () => selectProvider(providerIndex + 1)),
     );
     pickerWrap.appendChild(picker);
     root.appendChild(pickerWrap);
 
-    const scroll = document.createElement("div");
-    scroll.className = "ytm-sl-scroll";
-    const linesRoot = document.createElement("div");
-    linesRoot.className = "ytm-sl-lines";
-    scroll.appendChild(linesRoot);
-    root.appendChild(scroll);
+    const vlist = document.createElement("div");
+    vlist.className = "synced-lyrics-vlist";
+    vlist.addEventListener("wheel", onUserScroll, { passive: true });
+    vlist.addEventListener("touchmove", onUserScroll, { passive: true });
+    root.appendChild(vlist);
     container.appendChild(root);
 
-    let mouseY = 0;
-    const updatePicker = (event) => {
-      if (typeof event?.clientY === "number") mouseY = event.clientY;
-      const top = container.getBoundingClientRect().top;
-      const show = scroll.scrollTop <= picker.offsetHeight || mouseY - top <= picker.offsetHeight + 5;
-      pickerWrap.style.transform = show ? "translateY(0)" : `translateY(-${picker.offsetHeight}px)`;
+    let isHoveringTop = false;
+    const updatePickerVisibility = (show) => {
+      if (show === isHoveringTop) return;
+      isHoveringTop = show;
+      pickerWrap.style.setProperty("--lyrics-picker-top", show ? "0px" : "-60px");
+      pickerWrap.style.setProperty("--lyrics-picker-opacity", show ? "1" : "0");
+      pickerWrap.style.setProperty("--lyrics-picker-pointer", show ? "auto" : "none");
     };
-    scroll.addEventListener("scroll", updatePicker, { passive: true });
-    container.addEventListener("mousemove", updatePicker, { passive: true });
+
+    container.addEventListener("mousemove", (e) => {
+      const top = container.getBoundingClientRect().top;
+      const mouseY = e.clientY - top;
+      const isOver = mouseY >= 0 && mouseY <= (picker.offsetHeight || 55) + 12;
+      updatePickerVisibility(isOver);
+    }, { passive: true });
+
+    container.addEventListener("mouseleave", () => {
+      updatePickerVisibility(false);
+    }, { passive: true });
 
     if (!current || current.state === "fetching") {
-      message(linesRoot, "(っ˘ω˘ς )", "Loading lyrics…");
+      renderLoadingKaomoji(vlist);
       return;
     }
     if (current.state === "error") {
-      message(linesRoot, "(╥﹏╥)", current.error?.message || "Lyrics provider failed.", true, () => retryCurrentProvider(version));
+      renderErrorDisplay(vlist, current.error?.message || "Failed to fetch lyrics.", () => retryCurrentProvider(version));
       return;
     }
     if (current.data?.lines?.length) {
-      renderSynced(linesRoot, current.data.lines);
-      updateCurrentLine();
+      renderSynced(vlist, current.data.lines);
       return;
     }
     if (current.data?.lyrics) {
-      renderPlain(linesRoot, current.data.lyrics);
+      renderPlain(vlist, current.data.lyrics);
       return;
     }
-    message(linesRoot, "¯\\_(ツ)_/¯", "No lyrics found for this provider.");
+    renderNotFoundKaomoji(vlist);
   }
 
-  function pickerButton(label, handler) {
+  function pickerButton(glyph, className, onClick) {
     const button = document.createElement("button");
-    button.className = "ytm-sl-picker-button";
     button.type = "button";
-    button.textContent = label;
-    button.addEventListener("click", handler);
+    button.className = className;
+    button.textContent = glyph;
+    button.addEventListener("click", onClick);
     return button;
   }
 
   function pickerCenter(current, starred) {
     const center = document.createElement("div");
-    center.className = "ytm-sl-picker-center";
-    const label = document.createElement("div");
-    label.className = "ytm-sl-picker-label";
+    center.className = "lyrics-picker-content";
+
+    const labelRow = document.createElement("div");
+    labelRow.className = "lyrics-picker-content-label";
+
+    const item = document.createElement("div");
+    item.className = "lyrics-picker-item";
+
     const status = document.createElement("span");
-    status.className = "ytm-sl-status";
-    status.textContent = current?.state === "fetching" ? "◌" : current?.state === "error" ? "!" : usable(currentProvider) ? "✓" : "△";
-    const name = document.createElement("span");
-    name.textContent = currentProvider;
+    const statusClass = current?.state === "fetching"
+      ? "fetching"
+      : current?.state === "error"
+      ? "error"
+      : current?.data?.lines?.length || current?.data?.lyrics
+      ? "done"
+      : "warning";
+    status.className = `lyrics-picker-status ${statusClass}`;
+    status.textContent = current?.state === "fetching" ? "…" : current?.state === "error" ? "✕" : current?.data?.lines?.length ? "✓" : current?.data?.lyrics ? "≡" : "!";
+    item.appendChild(status);
+
+    const title = document.createElement("span");
+    title.textContent = currentProvider;
+    item.appendChild(title);
+
     const star = document.createElement("button");
     star.type = "button";
-    star.className = "ytm-sl-star";
+    star.className = "lyrics-picker-star";
     star.textContent = starred === currentProvider ? "★" : "☆";
-    star.title = starred === currentProvider ? "Use automatic provider selection" : "Prefer this provider for this track";
     star.addEventListener("click", toggleStar);
-    label.append(status, name, star);
-    center.appendChild(label);
+    item.appendChild(star);
+
+    labelRow.appendChild(item);
+    center.appendChild(labelRow);
+
     const dots = document.createElement("ul");
-    dots.className = "ytm-sl-dots";
-    PROVIDERS.forEach((provider, index) => {
+    dots.className = "lyrics-picker-content-dots";
+    PROVIDERS.forEach((name, index) => {
       const dot = document.createElement("li");
-      dot.className = `ytm-sl-dot${provider === currentProvider ? " current" : ""}`;
-      dot.title = provider;
+      dot.className = `lyrics-picker-dot${name === currentProvider ? " active" : ""}`;
       dot.addEventListener("click", () => selectProvider(index));
       dots.appendChild(dot);
     });
@@ -558,155 +1352,208 @@ html.ytm-tauri-synced-lyrics ${TAB} { scrollbar-width: none; }
     return center;
   }
 
-  function message(parent, face, text, error = false, retry) {
-    const node = document.createElement("div");
-    node.className = `ytm-sl-message${error ? " ytm-sl-error" : ""}`;
-    const faceNode = document.createElement("div");
-    faceNode.textContent = face;
-    const textNode = document.createElement("div");
-    textNode.textContent = text;
-    node.append(faceNode, textNode);
-    if (retry) {
-      const button = document.createElement("button");
-      button.className = "ytm-sl-retry";
-      button.type = "button";
-      button.textContent = "Retry";
-      button.addEventListener("click", retry);
-      node.appendChild(button);
-    }
-    parent.appendChild(node);
+  function renderLoadingKaomoji(target) {
+    const box = document.createElement("div");
+    box.className = "kaomoji-container";
+    box.textContent = "{ (>_<) }";
+    target.appendChild(box);
   }
 
-  function renderSynced(parent, lines) {
-    for (const line of lines) {
-      const node = document.createElement("div");
-      node.className = "ytm-sl-line upcoming";
-      node.dataset.time = String(line.timeInMs);
-      node.dataset.duration = String(line.duration);
+  function renderNotFoundKaomoji(target) {
+    const box = document.createElement("div");
+    box.className = "kaomoji-container";
+    box.textContent = "＼(〇_ｏ)／";
+    target.appendChild(box);
+  }
+
+  function renderErrorDisplay(target, message, onRetry) {
+    const wrap = document.createElement("div");
+    wrap.className = "error-container";
+    const box = document.createElement("div");
+    box.className = "error-box";
+    box.textContent = message;
+    wrap.appendChild(box);
+    if (onRetry) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "retry-btn";
+      btn.textContent = "Retry";
+      btn.addEventListener("click", onRetry);
+      wrap.appendChild(btn);
+    }
+    target.appendChild(wrap);
+  }
+
+  function retryCurrentProvider(version) {
+    if (!activeTrack) return;
+    const entry = CACHE.get(activeTrack.videoId);
+    if (!entry) return;
+    fetchProvider(currentProvider, activeTrack, entry).then(() => {
+      if (version === renderVersion) render();
+    });
+  }
+
+  function renderPlain(target, text) {
+    const lines = text.split("\n").filter((l) => l.trim());
+    lines.forEach((line) => {
+      const wrap = document.createElement("div");
+      wrap.className = "synced-line";
+      const lineText = document.createElement("div");
+      lineText.className = "text-lyrics";
+      const inner = document.createElement("span");
+      const span = document.createElement("span");
+      span.textContent = line;
+      inner.appendChild(span);
+      lineText.appendChild(inner);
+      wrap.appendChild(lineText);
+      target.appendChild(wrap);
+    });
+  }
+
+  function renderSynced(target, lines) {
+    lines.forEach((line, index) => {
+      const lineEl = document.createElement("div");
+      const rawText = clean(line.text);
+      const isInstrumental = !rawText || rawText === "♪" || rawText === "..." || rawText === "•••";
+      lineEl.className = `synced-line${isInstrumental ? " instrumental" : ""}`;
+      lineEl.dataset.index = String(index);
+
       const text = document.createElement("div");
-      text.className = "ytm-sl-text";
-      text.style.setProperty("--line-duration", `${Number.isFinite(line.duration) ? line.duration / 1000 : 2}s`);
-      if (config().lyrics_show_timecodes) {
+      text.className = "text-lyrics";
+      text.style.setProperty("--lyrics-duration", `${Math.max(line.duration, 1000) / 1000}s`, "important");
+      text.addEventListener("click", () => seek(line.timeInMs, lineEl));
+
+      if (config().lyrics_show_timecodes && line.time) {
         const time = document.createElement("span");
-        time.className = "ytm-sl-time";
+        time.className = "timecode";
         time.textContent = `[${line.time}]`;
         text.appendChild(time);
       }
-      const words = document.createElement("span");
-      words.className = "ytm-sl-words";
-      const value = clean(line.text) || "♪";
-      value.split(" ").forEach((word, index) => {
+
+      const wordsWrap = document.createElement("span");
+      const words = (isInstrumental ? "♪" : (line.text || "♪")).split(" ");
+      words.forEach((word, wIdx) => {
         const span = document.createElement("span");
-        span.className = "ytm-sl-word";
-        span.style.animationDelay = `${index * 0.05}s`;
-        span.style.transitionDelay = `${index * 0.05}s`;
+        span.style.transitionDelay = `${wIdx * 0.05}s`;
+        span.style.animationDelay = `${wIdx * 0.05}s`;
         span.textContent = `${word} `;
-        words.appendChild(span);
+        wordsWrap.appendChild(span);
       });
-      text.appendChild(words);
-      text.addEventListener("click", () => {
-        const media = runtime.media();
-        if (media) media.currentTime = (line.timeInMs + 10) / 1000;
-      });
-      node.appendChild(text);
-      parent.appendChild(node);
-    }
+      text.appendChild(wordsWrap);
+
+      if (config().lyrics_romanization && line.text && !isInstrumental) {
+        const romaji = document.createElement("span");
+        romaji.className = "romaji";
+        const rWords = line.text.split(" ");
+        rWords.forEach((word, wIdx) => {
+          const span = document.createElement("span");
+          span.style.transitionDelay = `${wIdx * 0.05}s`;
+          span.style.animationDelay = `${wIdx * 0.05}s`;
+          span.textContent = `${word} `;
+          romaji.appendChild(span);
+        });
+        text.appendChild(romaji);
+      }
+
+      lineEl.appendChild(text);
+      target.appendChild(lineEl);
+    });
+    updateCurrentLine();
   }
 
-  function renderPlain(parent, lyrics) {
-    for (const line of String(lyrics).split("\n").map((value) => value.trim()).filter(Boolean)) {
-      const node = document.createElement("div");
-      node.className = "ytm-sl-line";
-      const text = document.createElement("div");
-      text.className = "ytm-sl-text";
-      const words = document.createElement("span");
-      words.className = "ytm-sl-words";
-      words.style.opacity = "1";
-      words.textContent = line;
-      text.appendChild(words);
-      node.appendChild(text);
-      parent.appendChild(node);
+  function seek(timeInMs, lineEl) {
+    isUserScrolling = false;
+    if (lineEl) {
+      lineEl.classList.add("line-seek-pulse");
+      window.setTimeout(() => lineEl.classList.remove("line-seek-pulse"), 400);
     }
+    const player = getPlayer();
+    if (typeof player?.seekTo === "function") {
+      player.seekTo((timeInMs + 10) / 1000);
+      return;
+    }
+    const media = runtime.media();
+    if (media) media.currentTime = Math.max(0, (timeInMs + 10) / 1000);
   }
 
   function updateCurrentLine() {
     const container = document.getElementById(CONTAINER_ID);
-    const lines = [...(container?.querySelectorAll(".ytm-sl-line[data-time]") || [])];
-    if (!lines.length) return;
-    const now = (runtime.media()?.currentTime || 0) * 1000;
-    let currentIndex = -1;
-    lines.forEach((node, index) => {
-      const start = Number(node.dataset.time);
-      const duration = Number(node.dataset.duration);
-      const status = start >= now ? "upcoming" : now - start >= duration ? "previous" : "current";
-      node.classList.remove("upcoming", "previous", "current");
-      node.classList.add(status);
-      if (status === "current") currentIndex = index;
-    });
-    if (currentIndex !== -1 && currentIndex !== lastCurrentIndex) {
-      lastCurrentIndex = currentIndex;
-      const target = lines[Math.min(currentIndex + 1, lines.length - 1)];
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }
+    if (!container) return;
+    const current = state()?.[currentProvider]?.data?.lines;
+    if (!current?.length) return;
 
-  function retryCurrentProvider(version) {
-    if (version !== renderVersion || !activeTrack) return;
-    const entry = CACHE.get(activeTrack.videoId);
-    if (entry) fetchProvider(currentProvider, activeTrack, entry);
+    const player = getPlayer();
+    const currentTimeSec = typeof player?.getCurrentTime === "function"
+      ? player.getCurrentTime()
+      : (runtime.media()?.currentTime || 0);
+    const currentTimeMs = currentTimeSec * 1000;
+    const currentIndex = current.findLastIndex((line) => line.timeInMs <= currentTimeMs);
+
+    if (currentIndex === lastCurrentIndex) return;
+    lastCurrentIndex = currentIndex;
+
+    const lines = container.querySelectorAll(".synced-line");
+    lines.forEach((line, index) => {
+      line.classList.toggle("current", index === currentIndex);
+      line.classList.toggle("previous", index < currentIndex);
+      line.classList.toggle("upcoming", index > currentIndex);
+    });
+
+    if (currentIndex >= 0 && lines[currentIndex] && !isUserScrolling) {
+      const vlist = container.querySelector(".synced-lyrics-vlist");
+      if (vlist) {
+        const target = lines[currentIndex];
+        const top = target.offsetTop - vlist.clientHeight * 0.38;
+        vlist.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      }
+    }
   }
 
   function refreshTrack() {
     const info = trackInfo();
     if (!info) return;
-    if (activeTrack?.videoId === info.videoId) return;
-    activeTrack = info;
-    manuallySwitched = false;
-    lastCurrentIndex = -1;
-    currentProvider = readStarred(info.videoId) || PROVIDERS[0];
-    ensureTrack(info);
-    autoPickProvider();
-    render();
+
+    if (activeTrack?.videoId !== info.videoId || activeTrack?.title !== info.title) {
+      activeTrack = info;
+      manuallySwitched = false;
+      lastCurrentIndex = -1;
+      ensureTrack(info);
+      render();
+    }
   }
 
   function start() {
     installStyle();
-    document.documentElement.classList.add("ytm-tauri-synced-lyrics");
-    forceLyricsTab();
-    observer = new MutationObserver(() => {
-      forceLyricsTab();
-      ensureContainer();
-      refreshTrack();
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "aria-selected"] });
+    setupHeaderObserver();
     refreshTrack();
-    timer = window.setInterval(updateCurrentLine, config().lyrics_precise_timing ? 100 : 250);
-    trackTimer = window.setInterval(refreshTrack, 1000);
+
+    const player = getPlayer();
+    if (player && !player.__ytmSyncedLyricsBound) {
+      player.__ytmSyncedLyricsBound = true;
+      player.addEventListener("videodatachange", () => refreshTrack());
+    }
+
+    updateInterval = window.setInterval(updateCurrentLine, config().lyrics_precise_timing ? 100 : 250);
+    trackPollInterval = window.setInterval(() => {
+      setupHeaderObserver();
+      refreshTrack();
+      ensureContainer();
+    }, 1000);
+
     render();
   }
 
   function stop() {
-    observer?.disconnect();
-    observer = null;
-    window.clearInterval(timer);
-    window.clearInterval(trackTimer);
-    timer = 0;
-    trackTimer = 0;
-    document.documentElement.classList.remove("ytm-tauri-synced-lyrics");
-    document.getElementById(CONTAINER_ID)?.remove();
-    document.getElementById(STYLE_ID)?.remove();
-    activeTrack = null;
-    manuallySwitched = false;
-    lastCurrentIndex = -1;
+    if (headerObserver) headerObserver.disconnect();
+    headerObserver = null;
+    window.clearInterval(updateInterval);
+    window.clearInterval(trackPollInterval);
+    const container = document.getElementById(CONTAINER_ID);
+    if (container) container.remove();
   }
 
   function update() {
-    const container = document.getElementById(CONTAINER_ID);
-    if (container) container.dataset.effect = config().lyrics_line_effect || "fancy";
-    if (timer) {
-      window.clearInterval(timer);
-      timer = window.setInterval(updateCurrentLine, config().lyrics_precise_timing ? 100 : 250);
-    }
+    setupHeaderObserver();
     render();
   }
 

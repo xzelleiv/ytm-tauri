@@ -1,10 +1,30 @@
 (() => {
-  if (window.__ytmFeatures || location.origin !== "https://music.youtube.com") return;
+  if (window.__ytmFeatures) return;
+
+  if (window.trustedTypes && typeof window.trustedTypes.createPolicy === "function") {
+    try {
+      window.trustedTypes.createPolicy("default", {
+        createHTML: (input) => input,
+        createScriptURL: (input) => input,
+        createScript: (input) => input,
+      });
+    } catch {}
+  }
 
   const features = new Map();
   const requests = new Map();
+  const queue = [];
   let requestId = 0;
-  let config = {};
+  let sending = false;
+  let config = window.__ytmFeatureConfig && typeof window.__ytmFeatureConfig === "object" ? { ...window.__ytmFeatureConfig } : {};
+
+  function flushQueue() {
+    if (sending || !queue.length) return;
+    sending = true;
+    const item = queue.shift();
+    requests.set(item.id, item);
+    document.title = `YTMFEATURE:${JSON.stringify(item.message)}`;
+  }
 
   const api = {
     get config() {
@@ -26,7 +46,6 @@
     },
     request(url, init = {}) {
       const id = ++requestId;
-      const previousTitle = document.title;
       const message = {
         id,
         kind: "http",
@@ -39,22 +58,26 @@
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           requests.delete(id);
+          sending = false;
+          flushQueue();
           reject(new Error("feature request timed out"));
         }, 10_000);
-        requests.set(id, { resolve, reject, timeout });
-        document.title = `YTMFEATURE:${JSON.stringify(message)}`;
-        queueMicrotask(() => {
-          if (document.title.startsWith("YTMFEATURE:")) document.title = previousTitle;
-        });
+        queue.push({ id, message, resolve, reject, timeout });
+        flushQueue();
       });
     },
     receive(id, response) {
       const pending = requests.get(id);
-      if (!pending) return;
-      clearTimeout(pending.timeout);
-      requests.delete(id);
-      if (response?.error) pending.reject(new Error(response.error));
-      else pending.resolve(response);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        requests.delete(id);
+        if (response?.error) pending.reject(new Error(response.error));
+        else pending.resolve(response);
+      }
+      sending = false;
+      if (queue.length) {
+        setTimeout(flushQueue, 15);
+      }
     },
   };
 

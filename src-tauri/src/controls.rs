@@ -42,6 +42,13 @@ const CHECK_UPDATES_ID: &str = "check_updates";
 const TRAY_SHOW_ID: &str = "tray_show";
 const TRAY_QUIT_ID: &str = "tray_quit";
 const SYNCED_LYRICS_ID: &str = "feature_synced_lyrics";
+const LYRICS_TIMECODES_ID: &str = "feature_lyrics_timecodes";
+const LYRICS_PRECISE_TIMING_ID: &str = "feature_lyrics_precise_timing";
+const LYRICS_ROMANIZATION_ID: &str = "feature_lyrics_romanization";
+const LYRICS_EFFECT_FANCY_ID: &str = "feature_lyrics_effect_fancy";
+const LYRICS_EFFECT_SCALE_ID: &str = "feature_lyrics_effect_scale";
+const LYRICS_EFFECT_OFFSET_ID: &str = "feature_lyrics_effect_offset";
+const LYRICS_EFFECT_FOCUS_ID: &str = "feature_lyrics_effect_focus";
 const LASTFM_SCROBBLING_ID: &str = "feature_lastfm_scrobbling";
 const LISTENBRAINZ_SCROBBLING_ID: &str = "feature_listenbrainz_scrobbling";
 const NOTIFICATIONS_ID: &str = "feature_notifications";
@@ -54,6 +61,13 @@ const NAVIGATION_CONTROLS_ID: &str = "feature_navigation_controls";
 const PLAYBACK_SPEED_ID: &str = "feature_playback_speed";
 const SKIP_DISLIKED_ID: &str = "feature_skip_disliked";
 const ALBUM_COLOR_THEME_ID: &str = "feature_album_color_theme";
+const SPONSORBLOCK_ID: &str = "feature_sponsorblock";
+const BLUR_NAV_BAR_ID: &str = "feature_blur_nav_bar";
+const DISABLE_AUTOPLAY_ID: &str = "feature_disable_autoplay";
+const VIDEO_TOGGLE_ID: &str = "feature_video_toggle";
+const AMBIENT_MODE_ID: &str = "feature_ambient_mode";
+const SKIP_SILENCES_ID: &str = "feature_skip_silences";
+const CROSSFADE_ID: &str = "feature_crossfade";
 const LOCAL_SHORTCUTS: [(&str, &str); 5] = [
     ("Ctrl+R", RELOAD_ID),
     ("Ctrl+=", ZOOM_IN_ID),
@@ -95,19 +109,13 @@ pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
         ("Ctrl+Alt+S", PLAY_PAUSE_ID),
         ("Ctrl+Alt+D", NEXT_ID),
     ] {
-        if let Err(error) =
-            app.global_shortcut()
-                .on_shortcut(shortcut, move |app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        media_action(app, action);
-                    }
-                })
-        {
-            platform::error(
-                "Global Shortcut",
-                &format!("{shortcut} could not be registered: {error}"),
-            );
-        }
+        let _ = app
+            .global_shortcut()
+            .on_shortcut(shortcut, move |app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    media_action(app, action);
+                }
+            });
     }
 
     let state_for_menu = state.clone();
@@ -143,19 +151,13 @@ pub fn set_local_shortcuts(app: &AppHandle, focused: bool, state: &AppState) {
                 continue;
             }
             let state = state.clone();
-            if let Err(error) =
-                app.global_shortcut()
-                    .on_shortcut(shortcut, move |app, _shortcut, event| {
-                        if event.state == ShortcutState::Pressed {
-                            handle_local_shortcut(app, action, &state);
-                        }
-                    })
-            {
-                platform::error(
-                    "Shortcut",
-                    &format!("{shortcut} could not be registered: {error}"),
-                );
-            }
+            let _ = app
+                .global_shortcut()
+                .on_shortcut(shortcut, move |app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        handle_local_shortcut(app, action, &state);
+                    }
+                });
         } else if app.global_shortcut().is_registered(shortcut) {
             let _ = app.global_shortcut().unregister(shortcut);
         }
@@ -224,25 +226,117 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         .item(&start_minimized)
         .build()?;
 
-    let synced_lyrics = feature_item(app, SYNCED_LYRICS_ID, "Synced Lyrics", initial.synced_lyrics)?;
+    let synced_lyrics = feature_item(
+        app,
+        SYNCED_LYRICS_ID,
+        "Enable Synced Lyrics",
+        initial.synced_lyrics,
+    )?;
+    let lyrics_timecodes = feature_item(
+        app,
+        LYRICS_TIMECODES_ID,
+        "Show Timecodes",
+        initial.lyrics_show_timecodes,
+    )?;
+    let lyrics_precise = feature_item(
+        app,
+        LYRICS_PRECISE_TIMING_ID,
+        "Precise Timing (100ms)",
+        initial.lyrics_precise_timing,
+    )?;
+    let lyrics_romanization = feature_item(
+        app,
+        LYRICS_ROMANIZATION_ID,
+        "Romanization (Romaji)",
+        initial.lyrics_romanization,
+    )?;
+    let effect_fancy = feature_item(
+        app,
+        LYRICS_EFFECT_FANCY_ID,
+        "Fancy (Glow & Wobble)",
+        initial.lyrics_line_effect == "fancy",
+    )?;
+    let effect_scale = feature_item(
+        app,
+        LYRICS_EFFECT_SCALE_ID,
+        "Scale (Active Focus)",
+        initial.lyrics_line_effect == "scale",
+    )?;
+    let effect_offset = feature_item(
+        app,
+        LYRICS_EFFECT_OFFSET_ID,
+        "Offset (Indented)",
+        initial.lyrics_line_effect == "offset",
+    )?;
+    let effect_focus = feature_item(
+        app,
+        LYRICS_EFFECT_FOCUS_ID,
+        "Focus (Clean Opacity)",
+        initial.lyrics_line_effect == "focus",
+    )?;
+    let effect_menu = SubmenuBuilder::new(app, "Line Animation Effect")
+        .item(&effect_fancy)
+        .item(&effect_scale)
+        .item(&effect_offset)
+        .item(&effect_focus)
+        .build()?;
+
+    let lyrics_sep = PredefinedMenuItem::separator(app)?;
+    let lyrics_menu = SubmenuBuilder::new(app, "Synced Lyrics")
+        .item(&synced_lyrics)
+        .item(&lyrics_sep)
+        .item(&lyrics_timecodes)
+        .item(&lyrics_precise)
+        .item(&lyrics_romanization)
+        .item(&effect_menu)
+        .build()?;
+
     let lastfm = feature_item(
         app,
         LASTFM_SCROBBLING_ID,
-        "Last.fm",
+        "Last.fm Scrobbler",
         initial.lastfm_scrobbling,
     )?;
     let listenbrainz = feature_item(
         app,
         LISTENBRAINZ_SCROBBLING_ID,
-        "ListenBrainz",
+        "ListenBrainz Scrobbler",
         initial.listenbrainz_scrobbling,
     )?;
-    let notifications = feature_item(app, NOTIFICATIONS_ID, "Notifications", initial.notifications)?;
+    let scrobbling = SubmenuBuilder::new(app, "Scrobbling")
+        .item(&lastfm)
+        .item(&listenbrainz)
+        .build()?;
+
+    let notifications = feature_item(
+        app,
+        NOTIFICATIONS_ID,
+        "Track Notifications",
+        initial.notifications,
+    )?;
     let windows_media = feature_item(
         app,
         WINDOWS_MEDIA_CONTROLS_ID,
-        "Windows Media Controls",
+        "Taskbar Media Controls",
         initial.windows_media_controls,
+    )?;
+    let desktop = SubmenuBuilder::new(app, "Desktop Integration")
+        .item(&windows_media)
+        .item(&notifications)
+        .build()?;
+
+    let equalizer = feature_item(app, EQUALIZER_ID, "10-Band Equalizer", initial.equalizer)?;
+    let precise_volume = feature_item(
+        app,
+        PRECISE_VOLUME_ID,
+        "Precise Volume Steps",
+        initial.precise_volume,
+    )?;
+    let exponential_volume = feature_item(
+        app,
+        EXPONENTIAL_VOLUME_ID,
+        "Exponential Volume Curve",
+        initial.exponential_volume,
     )?;
     let output = feature_item(
         app,
@@ -250,36 +344,32 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         "Custom Output Device",
         initial.custom_output_device,
     )?;
-    let equalizer = feature_item(app, EQUALIZER_ID, "Equalizer", initial.equalizer)?;
-    let precise_volume = feature_item(
+    let audio_sep = PredefinedMenuItem::separator(app)?;
+    let audio = SubmenuBuilder::new(app, "Audio & Sound")
+        .item(&equalizer)
+        .item(&audio_sep)
+        .item(&precise_volume)
+        .item(&exponential_volume)
+        .item(&output)
+        .build()?;
+
+    let sponsorblock = feature_item(
         app,
-        PRECISE_VOLUME_ID,
-        "Precise Volume",
-        initial.precise_volume,
+        SPONSORBLOCK_ID,
+        "SponsorBlock (Skip Intros/Non-Music)",
+        initial.sponsorblock,
     )?;
-    let exponential_volume = feature_item(
+    let disable_autoplay = feature_item(
         app,
-        EXPONENTIAL_VOLUME_ID,
-        "Exponential Volume",
-        initial.exponential_volume,
+        DISABLE_AUTOPLAY_ID,
+        "Disable Autoplay After Queue",
+        initial.disable_autoplay,
     )?;
-    let playback_speed = feature_item(
+    let video_toggle = feature_item(
         app,
-        PLAYBACK_SPEED_ID,
-        "Playback Speed",
-        initial.playback_speed,
-    )?;
-    let navigation = feature_item(
-        app,
-        NAVIGATION_CONTROLS_ID,
-        "Navigation Controls",
-        initial.navigation_controls,
-    )?;
-    let album_theme = feature_item(
-        app,
-        ALBUM_COLOR_THEME_ID,
-        "Album Color Theme",
-        initial.album_color_theme,
+        VIDEO_TOGGLE_ID,
+        "Audio-Only Mode (HQ Album Art)",
+        initial.video_toggle,
     )?;
     let skip_disliked = feature_item(
         app,
@@ -287,40 +377,83 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         "Skip Disliked Songs",
         initial.skip_disliked,
     )?;
-
-    let scrobbling = SubmenuBuilder::new(app, "Scrobbling")
-        .item(&lastfm)
-        .item(&listenbrainz)
-        .build()?;
-    let desktop = SubmenuBuilder::new(app, "Desktop")
-        .item(&notifications)
-        .item(&windows_media)
-        .build()?;
-    let audio = SubmenuBuilder::new(app, "Audio")
-        .item(&output)
-        .item(&equalizer)
-        .item(&precise_volume)
-        .item(&exponential_volume)
+    let playback_speed = feature_item(
+        app,
+        PLAYBACK_SPEED_ID,
+        "Playback Speed Slider",
+        initial.playback_speed,
+    )?;
+    let skip_silences = feature_item(
+        app,
+        SKIP_SILENCES_ID,
+        "Skip Leading Silence",
+        initial.skip_silences,
+    )?;
+    let crossfade = feature_item(
+        app,
+        CROSSFADE_ID,
+        "Smooth Track Crossfade",
+        initial.crossfade,
+    )?;
+    let smart_playback = SubmenuBuilder::new(app, "Smart Playback")
+        .item(&sponsorblock)
+        .item(&skip_silences)
+        .item(&crossfade)
+        .item(&skip_disliked)
+        .item(&disable_autoplay)
+        .item(&video_toggle)
         .item(&playback_speed)
         .build()?;
-    let interface = SubmenuBuilder::new(app, "Interface")
-        .item(&navigation)
+
+    let ambient_mode = feature_item(
+        app,
+        AMBIENT_MODE_ID,
+        "Ambient Glow Aura",
+        initial.ambient_mode,
+    )?;
+    let blur_nav_bar = feature_item(
+        app,
+        BLUR_NAV_BAR_ID,
+        "Blur Navigation Bar",
+        initial.blur_nav_bar,
+    )?;
+    let album_theme = feature_item(
+        app,
+        ALBUM_COLOR_THEME_ID,
+        "Dynamic Album Theme",
+        initial.album_color_theme,
+    )?;
+    let navigation = feature_item(
+        app,
+        NAVIGATION_CONTROLS_ID,
+        "In-App Navigation Buttons",
+        initial.navigation_controls,
+    )?;
+    let appearance = SubmenuBuilder::new(app, "Appearance & UI")
+        .item(&ambient_mode)
+        .item(&blur_nav_bar)
         .item(&album_theme)
+        .item(&navigation)
         .build()?;
-    let playback_features = SubmenuBuilder::new(app, "Playback")
-        .item(&skip_disliked)
-        .build()?;
+
     let features = SubmenuBuilder::new(app, "Features")
-        .item(&synced_lyrics)
+        .item(&lyrics_menu)
+        .item(&smart_playback)
+        .item(&audio)
+        .item(&appearance)
         .item(&scrobbling)
         .item(&desktop)
-        .item(&audio)
-        .item(&interface)
-        .item(&playback_features)
         .build()?;
 
     let feature_items = HashMap::from([
         (SYNCED_LYRICS_ID, synced_lyrics),
+        (LYRICS_TIMECODES_ID, lyrics_timecodes),
+        (LYRICS_PRECISE_TIMING_ID, lyrics_precise),
+        (LYRICS_ROMANIZATION_ID, lyrics_romanization),
+        (LYRICS_EFFECT_FANCY_ID, effect_fancy),
+        (LYRICS_EFFECT_SCALE_ID, effect_scale),
+        (LYRICS_EFFECT_OFFSET_ID, effect_offset),
+        (LYRICS_EFFECT_FOCUS_ID, effect_focus),
         (LASTFM_SCROBBLING_ID, lastfm),
         (LISTENBRAINZ_SCROBBLING_ID, listenbrainz),
         (NOTIFICATIONS_ID, notifications),
@@ -333,6 +466,13 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         (NAVIGATION_CONTROLS_ID, navigation),
         (ALBUM_COLOR_THEME_ID, album_theme),
         (SKIP_DISLIKED_ID, skip_disliked),
+        (SPONSORBLOCK_ID, sponsorblock),
+        (BLUR_NAV_BAR_ID, blur_nav_bar),
+        (DISABLE_AUTOPLAY_ID, disable_autoplay),
+        (VIDEO_TOGGLE_ID, video_toggle),
+        (AMBIENT_MODE_ID, ambient_mode),
+        (SKIP_SILENCES_ID, skip_silences),
+        (CROSSFADE_ID, crossfade),
     ]);
 
     let clear_cache =
@@ -413,15 +553,23 @@ fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellU
         ZOOM_OUT_ID => set_zoom(app, state, -0.1),
         ZOOM_RESET_ID => reset_zoom(app, state),
         DISCORD_RPC_ID => {
-            let enabled = shell.discord.is_checked().unwrap_or(true);
-            settings::update(&state.settings, |value| value.discord_rpc = enabled);
+            let mut enabled = false;
+            settings::update(&state.settings, |value| {
+                value.discord_rpc = !value.discord_rpc;
+                enabled = value.discord_rpc;
+            });
+            let _ = shell.discord.set_checked(enabled);
             state.presence.set_enabled(enabled);
         }
         DISCORD_STATUS_ID => platform::info("Discord RPC", &state.presence.status()),
         AD_BLOCK_ID => {
-            let enabled = shell.ad_block.is_checked().unwrap_or(true);
+            let mut enabled = false;
+            settings::update(&state.settings, |value| {
+                value.ad_block = !value.ad_block;
+                enabled = value.ad_block;
+            });
+            let _ = shell.ad_block.set_checked(enabled);
             state.adblock.set_enabled(enabled);
-            settings::update(&state.settings, |value| value.ad_block = enabled);
             eval_main(
                 app,
                 &format!("window.__ytMusicTauriAdBlockEnabled = {enabled}; location.reload();"),
@@ -440,8 +588,12 @@ fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellU
             ),
         ),
         CLOSE_TO_TRAY_ID => {
-            let enabled = shell.close_to_tray.is_checked().unwrap_or(false);
-            settings::update(&state.settings, |value| value.close_to_tray = enabled);
+            let mut enabled = false;
+            settings::update(&state.settings, |value| {
+                value.close_to_tray = !value.close_to_tray;
+                enabled = value.close_to_tray;
+            });
+            let _ = shell.close_to_tray.set_checked(enabled);
         }
         STARTUP_ID => set_startup(state, shell),
         START_MINIMIZED_ID => set_start_minimized(state, shell),
@@ -462,24 +614,140 @@ fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &She
     let Some(item) = shell.feature_items.get(id) else {
         return false;
     };
-    let enabled = item.is_checked().unwrap_or(false);
 
+    let mut is_now_enabled = false;
     settings::update(&state.settings, |value| match id {
-        SYNCED_LYRICS_ID => value.synced_lyrics = enabled,
-        LASTFM_SCROBBLING_ID => value.lastfm_scrobbling = enabled,
-        LISTENBRAINZ_SCROBBLING_ID => value.listenbrainz_scrobbling = enabled,
-        NOTIFICATIONS_ID => value.notifications = enabled,
-        WINDOWS_MEDIA_CONTROLS_ID => value.windows_media_controls = enabled,
-        CUSTOM_OUTPUT_DEVICE_ID => value.custom_output_device = enabled,
-        EQUALIZER_ID => value.equalizer = enabled,
-        PRECISE_VOLUME_ID => value.precise_volume = enabled,
-        EXPONENTIAL_VOLUME_ID => value.exponential_volume = enabled,
-        NAVIGATION_CONTROLS_ID => value.navigation_controls = enabled,
-        PLAYBACK_SPEED_ID => value.playback_speed = enabled,
-        SKIP_DISLIKED_ID => value.skip_disliked = enabled,
-        ALBUM_COLOR_THEME_ID => value.album_color_theme = enabled,
+        SYNCED_LYRICS_ID => {
+            value.synced_lyrics = !value.synced_lyrics;
+            is_now_enabled = value.synced_lyrics;
+        }
+        LYRICS_TIMECODES_ID => {
+            value.lyrics_show_timecodes = !value.lyrics_show_timecodes;
+            is_now_enabled = value.lyrics_show_timecodes;
+        }
+        LYRICS_PRECISE_TIMING_ID => {
+            value.lyrics_precise_timing = !value.lyrics_precise_timing;
+            is_now_enabled = value.lyrics_precise_timing;
+        }
+        LYRICS_ROMANIZATION_ID => {
+            value.lyrics_romanization = !value.lyrics_romanization;
+            is_now_enabled = value.lyrics_romanization;
+        }
+        LYRICS_EFFECT_FANCY_ID => {
+            value.lyrics_line_effect = "fancy".to_string();
+            is_now_enabled = true;
+        }
+        LYRICS_EFFECT_SCALE_ID => {
+            value.lyrics_line_effect = "scale".to_string();
+            is_now_enabled = true;
+        }
+        LYRICS_EFFECT_OFFSET_ID => {
+            value.lyrics_line_effect = "offset".to_string();
+            is_now_enabled = true;
+        }
+        LYRICS_EFFECT_FOCUS_ID => {
+            value.lyrics_line_effect = "focus".to_string();
+            is_now_enabled = true;
+        }
+        LASTFM_SCROBBLING_ID => {
+            value.lastfm_scrobbling = !value.lastfm_scrobbling;
+            is_now_enabled = value.lastfm_scrobbling;
+        }
+        LISTENBRAINZ_SCROBBLING_ID => {
+            value.listenbrainz_scrobbling = !value.listenbrainz_scrobbling;
+            is_now_enabled = value.listenbrainz_scrobbling;
+        }
+        NOTIFICATIONS_ID => {
+            value.notifications = !value.notifications;
+            is_now_enabled = value.notifications;
+        }
+        WINDOWS_MEDIA_CONTROLS_ID => {
+            value.windows_media_controls = !value.windows_media_controls;
+            is_now_enabled = value.windows_media_controls;
+        }
+        CUSTOM_OUTPUT_DEVICE_ID => {
+            value.custom_output_device = !value.custom_output_device;
+            is_now_enabled = value.custom_output_device;
+        }
+        EQUALIZER_ID => {
+            value.equalizer = !value.equalizer;
+            is_now_enabled = value.equalizer;
+        }
+        PRECISE_VOLUME_ID => {
+            value.precise_volume = !value.precise_volume;
+            is_now_enabled = value.precise_volume;
+        }
+        EXPONENTIAL_VOLUME_ID => {
+            value.exponential_volume = !value.exponential_volume;
+            is_now_enabled = value.exponential_volume;
+        }
+        NAVIGATION_CONTROLS_ID => {
+            value.navigation_controls = !value.navigation_controls;
+            is_now_enabled = value.navigation_controls;
+        }
+        PLAYBACK_SPEED_ID => {
+            value.playback_speed = !value.playback_speed;
+            is_now_enabled = value.playback_speed;
+        }
+        SKIP_DISLIKED_ID => {
+            value.skip_disliked = !value.skip_disliked;
+            is_now_enabled = value.skip_disliked;
+        }
+        ALBUM_COLOR_THEME_ID => {
+            value.album_color_theme = !value.album_color_theme;
+            is_now_enabled = value.album_color_theme;
+        }
+        SPONSORBLOCK_ID => {
+            value.sponsorblock = !value.sponsorblock;
+            is_now_enabled = value.sponsorblock;
+        }
+        BLUR_NAV_BAR_ID => {
+            value.blur_nav_bar = !value.blur_nav_bar;
+            is_now_enabled = value.blur_nav_bar;
+        }
+        DISABLE_AUTOPLAY_ID => {
+            value.disable_autoplay = !value.disable_autoplay;
+            is_now_enabled = value.disable_autoplay;
+        }
+        VIDEO_TOGGLE_ID => {
+            value.video_toggle = !value.video_toggle;
+            is_now_enabled = value.video_toggle;
+        }
+        AMBIENT_MODE_ID => {
+            value.ambient_mode = !value.ambient_mode;
+            is_now_enabled = value.ambient_mode;
+        }
+        SKIP_SILENCES_ID => {
+            value.skip_silences = !value.skip_silences;
+            is_now_enabled = value.skip_silences;
+        }
+        CROSSFADE_ID => {
+            value.crossfade = !value.crossfade;
+            is_now_enabled = value.crossfade;
+        }
         _ => {}
     });
+
+    if id.starts_with("feature_lyrics_effect_") {
+        let current_effect = settings::snapshot(&state.settings).lyrics_line_effect;
+        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_FANCY_ID) {
+            let _ = it.set_checked(current_effect == "fancy");
+        }
+        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_SCALE_ID) {
+            let _ = it.set_checked(current_effect == "scale");
+        }
+        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_OFFSET_ID) {
+            let _ = it.set_checked(current_effect == "offset");
+        }
+        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_FOCUS_ID) {
+            let _ = it.set_checked(current_effect == "focus");
+        }
+    } else {
+        let _ = item.set_checked(is_now_enabled);
+    }
+    if id == WINDOWS_MEDIA_CONTROLS_ID {
+        crate::windows_media::refresh(app);
+    }
     sync_page_features(app, state);
     true
 }

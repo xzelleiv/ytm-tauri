@@ -38,6 +38,13 @@ const PLAYBACK_SPEED_SCRIPT: &str = include_str!("playback_speed_probe.js");
 const SKIP_DISLIKED_SCRIPT: &str = include_str!("skip_disliked_probe.js");
 const NAVIGATION_SCRIPT: &str = include_str!("navigation_probe.js");
 const ALBUM_COLOR_THEME_SCRIPT: &str = include_str!("album_color_theme_probe.js");
+const SPONSORBLOCK_SCRIPT: &str = include_str!("sponsorblock_probe.js");
+const BLUR_NAV_BAR_SCRIPT: &str = include_str!("blur_nav_bar_probe.js");
+const DISABLE_AUTOPLAY_SCRIPT: &str = include_str!("disable_autoplay_probe.js");
+const VIDEO_TOGGLE_SCRIPT: &str = include_str!("video_toggle_probe.js");
+const AMBIENT_MODE_SCRIPT: &str = include_str!("ambient_mode_probe.js");
+const SKIP_SILENCES_SCRIPT: &str = include_str!("skip_silences_probe.js");
+const CROSSFADE_SCRIPT: &str = include_str!("crossfade_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -194,10 +201,8 @@ pub fn run() {
                                             window.app_handle(),
                                             Some(&track),
                                         );
-                                        notifications_for_window.update(
-                                            window.app_handle(),
-                                            &track,
-                                        );
+                                        notifications_for_window
+                                            .update(window.app_handle(), &track);
                                         windows_media::update(&window, Some(&track));
                                         scrobbler_for_window.update(track.clone());
                                         presence_for_window.update(track);
@@ -248,7 +253,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
         page_feature_config(settings)
     );
     let page_features = format!(
-        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{ALBUM_COLOR_THEME_SCRIPT}"
+        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{ALBUM_COLOR_THEME_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{SKIP_SILENCES_SCRIPT}\n{CROSSFADE_SCRIPT}"
     );
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
@@ -256,9 +261,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
             "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
         )
     } else {
-        format!(
-            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{TRACK_PROBE_SCRIPT}"
-        )
+        format!("{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{TRACK_PROBE_SCRIPT}")
     }
 }
 
@@ -282,6 +285,13 @@ pub fn page_feature_config(settings: &settings::Settings) -> String {
         "playback_rate": settings.playback_rate,
         "skip_disliked": settings.skip_disliked,
         "album_color_theme": settings.album_color_theme,
+        "sponsorblock": settings.sponsorblock,
+        "blur_nav_bar": settings.blur_nav_bar,
+        "disable_autoplay": settings.disable_autoplay,
+        "video_toggle": settings.video_toggle,
+        "ambient_mode": settings.ambient_mode,
+        "skip_silences": settings.skip_silences,
+        "crossfade": settings.crossfade,
     })
     .to_string()
 }

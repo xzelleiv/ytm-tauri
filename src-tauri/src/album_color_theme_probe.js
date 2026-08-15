@@ -1,6 +1,6 @@
 (() => {
   const runtime = window.__ytmFeatures;
-  if (!runtime || location.origin !== "https://music.youtube.com") return;
+  if (!runtime) return;
 
   const COLOR_KEY = "--ytmusic-album-color";
   const DARK_KEY = "--ytmusic-album-color-dark";
@@ -118,7 +118,8 @@
     const style = document.createElement("style");
     style.id = "ytm-tauri-album-theme-style";
     style.textContent = `.ytm-tauri-seekbar-theme ytmusic-player-bar tp-yt-paper-slider { --paper-slider-knob-color: rgb(var(${COLOR_KEY})) !important; --paper-slider-active-color: rgb(var(${COLOR_KEY})) !important; }`;
-    document.documentElement.appendChild(style);
+    const target = document.head || document.documentElement || document.body;
+    if (target) target.appendChild(style);
   }
 
   async function refresh() {
