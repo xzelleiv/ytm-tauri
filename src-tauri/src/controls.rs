@@ -45,6 +45,7 @@ const SYNCED_LYRICS_ID: &str = "feature_synced_lyrics";
 const LYRICS_TIMECODES_ID: &str = "feature_lyrics_timecodes";
 const LYRICS_PRECISE_TIMING_ID: &str = "feature_lyrics_precise_timing";
 const LYRICS_ROMANIZATION_ID: &str = "feature_lyrics_romanization";
+const LYRICS_AUTO_SYNC_ID: &str = "feature_lyrics_auto_sync";
 const LYRICS_EFFECT_FANCY_ID: &str = "feature_lyrics_effect_fancy";
 const LYRICS_EFFECT_SCALE_ID: &str = "feature_lyrics_effect_scale";
 const LYRICS_EFFECT_OFFSET_ID: &str = "feature_lyrics_effect_offset";
@@ -60,20 +61,21 @@ const EXPONENTIAL_VOLUME_ID: &str = "feature_exponential_volume";
 const NAVIGATION_CONTROLS_ID: &str = "feature_navigation_controls";
 const PLAYBACK_SPEED_ID: &str = "feature_playback_speed";
 const SKIP_DISLIKED_ID: &str = "feature_skip_disliked";
-const ALBUM_COLOR_THEME_ID: &str = "feature_album_color_theme";
 const SPONSORBLOCK_ID: &str = "feature_sponsorblock";
 const BLUR_NAV_BAR_ID: &str = "feature_blur_nav_bar";
 const DISABLE_AUTOPLAY_ID: &str = "feature_disable_autoplay";
 const VIDEO_TOGGLE_ID: &str = "feature_video_toggle";
 const AMBIENT_MODE_ID: &str = "feature_ambient_mode";
-const SKIP_SILENCES_ID: &str = "feature_skip_silences";
 const CROSSFADE_ID: &str = "feature_crossfade";
-const LOCAL_SHORTCUTS: [(&str, &str); 5] = [
+const DEVTOOLS_ID: &str = "tools_devtools";
+const LOCAL_SHORTCUTS: [(&str, &str); 7] = [
     ("Ctrl+R", RELOAD_ID),
     ("Ctrl+=", ZOOM_IN_ID),
     ("Ctrl+-", ZOOM_OUT_ID),
     ("Ctrl+0", ZOOM_RESET_ID),
     ("Ctrl+Shift+Delete", RESET_SESSION_ID),
+    ("F12", DEVTOOLS_ID),
+    ("Ctrl+Shift+I", DEVTOOLS_ID),
 ];
 const MAX_NOW_PLAYING_CHARS: usize = 72;
 const MAX_TRAY_TOOLTIP_CHARS: usize = 120;
@@ -250,6 +252,12 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         "Romanization (Romaji)",
         initial.lyrics_romanization,
     )?;
+    let lyrics_auto_sync = feature_item(
+        app,
+        LYRICS_AUTO_SYNC_ID,
+        "Auto Sync Lyrics after 3 Seconds",
+        initial.lyrics_auto_sync,
+    )?;
     let effect_fancy = feature_item(
         app,
         LYRICS_EFFECT_FANCY_ID,
@@ -288,6 +296,7 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         .item(&lyrics_timecodes)
         .item(&lyrics_precise)
         .item(&lyrics_romanization)
+        .item(&lyrics_auto_sync)
         .item(&effect_menu)
         .build()?;
 
@@ -383,12 +392,6 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         "Playback Speed Slider",
         initial.playback_speed,
     )?;
-    let skip_silences = feature_item(
-        app,
-        SKIP_SILENCES_ID,
-        "Skip Leading Silence",
-        initial.skip_silences,
-    )?;
     let crossfade = feature_item(
         app,
         CROSSFADE_ID,
@@ -397,7 +400,6 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
     )?;
     let smart_playback = SubmenuBuilder::new(app, "Smart Playback")
         .item(&sponsorblock)
-        .item(&skip_silences)
         .item(&crossfade)
         .item(&skip_disliked)
         .item(&disable_autoplay)
@@ -417,12 +419,6 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         "Blur Navigation Bar",
         initial.blur_nav_bar,
     )?;
-    let album_theme = feature_item(
-        app,
-        ALBUM_COLOR_THEME_ID,
-        "Dynamic Album Theme",
-        initial.album_color_theme,
-    )?;
     let navigation = feature_item(
         app,
         NAVIGATION_CONTROLS_ID,
@@ -432,7 +428,6 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
     let appearance = SubmenuBuilder::new(app, "Appearance & UI")
         .item(&ambient_mode)
         .item(&blur_nav_bar)
-        .item(&album_theme)
         .item(&navigation)
         .build()?;
 
@@ -450,6 +445,7 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         (LYRICS_TIMECODES_ID, lyrics_timecodes),
         (LYRICS_PRECISE_TIMING_ID, lyrics_precise),
         (LYRICS_ROMANIZATION_ID, lyrics_romanization),
+        (LYRICS_AUTO_SYNC_ID, lyrics_auto_sync),
         (LYRICS_EFFECT_FANCY_ID, effect_fancy),
         (LYRICS_EFFECT_SCALE_ID, effect_scale),
         (LYRICS_EFFECT_OFFSET_ID, effect_offset),
@@ -464,26 +460,26 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         (EXPONENTIAL_VOLUME_ID, exponential_volume),
         (PLAYBACK_SPEED_ID, playback_speed),
         (NAVIGATION_CONTROLS_ID, navigation),
-        (ALBUM_COLOR_THEME_ID, album_theme),
         (SKIP_DISLIKED_ID, skip_disliked),
         (SPONSORBLOCK_ID, sponsorblock),
         (BLUR_NAV_BAR_ID, blur_nav_bar),
         (DISABLE_AUTOPLAY_ID, disable_autoplay),
         (VIDEO_TOGGLE_ID, video_toggle),
         (AMBIENT_MODE_ID, ambient_mode),
-        (SKIP_SILENCES_ID, skip_silences),
         (CROSSFADE_ID, crossfade),
     ]);
 
     let clear_cache =
         MenuItemBuilder::with_id(CLEAR_CACHE_ID, "Clear Cache and Reload").build(app)?;
     let reset_session = MenuItemBuilder::with_id(RESET_SESSION_ID, "Reset Session").build(app)?;
+    let devtools = MenuItemBuilder::with_id(DEVTOOLS_ID, "Developer Tools (F12)").build(app)?;
     let check_updates =
         MenuItemBuilder::with_id(CHECK_UPDATES_ID, "Check for Updates").build(app)?;
     let tools_separator = PredefinedMenuItem::separator(app)?;
     let tools = SubmenuBuilder::new(app, "Tools")
         .item(&clear_cache)
         .item(&reset_session)
+        .item(&devtools)
         .item(&tools_separator)
         .item(&check_updates)
         .build()?;
@@ -599,7 +595,12 @@ fn handle_menu_event(app: &AppHandle, id: &str, state: &AppState, shell: &ShellU
         START_MINIMIZED_ID => set_start_minimized(state, shell),
         CLEAR_CACHE_ID => clear_cache(app),
         RESET_SESSION_ID => reset_session(app, state),
-        CHECK_UPDATES_ID => updates::check_in_background(false),
+        DEVTOOLS_ID => {
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
+            }
+        }
+        CHECK_UPDATES_ID => updates::check(app, &state.settings, updates::CheckMode::Manual),
         TRAY_SHOW_ID => show_main_window(app),
         TRAY_QUIT_ID => {
             state.quitting.store(true, Ordering::Relaxed);
@@ -632,6 +633,10 @@ fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &She
         LYRICS_ROMANIZATION_ID => {
             value.lyrics_romanization = !value.lyrics_romanization;
             is_now_enabled = value.lyrics_romanization;
+        }
+        LYRICS_AUTO_SYNC_ID => {
+            value.lyrics_auto_sync = !value.lyrics_auto_sync;
+            is_now_enabled = value.lyrics_auto_sync;
         }
         LYRICS_EFFECT_FANCY_ID => {
             value.lyrics_line_effect = "fancy".to_string();
@@ -693,10 +698,6 @@ fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &She
             value.skip_disliked = !value.skip_disliked;
             is_now_enabled = value.skip_disliked;
         }
-        ALBUM_COLOR_THEME_ID => {
-            value.album_color_theme = !value.album_color_theme;
-            is_now_enabled = value.album_color_theme;
-        }
         SPONSORBLOCK_ID => {
             value.sponsorblock = !value.sponsorblock;
             is_now_enabled = value.sponsorblock;
@@ -716,10 +717,6 @@ fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &She
         AMBIENT_MODE_ID => {
             value.ambient_mode = !value.ambient_mode;
             is_now_enabled = value.ambient_mode;
-        }
-        SKIP_SILENCES_ID => {
-            value.skip_silences = !value.skip_silences;
-            is_now_enabled = value.skip_silences;
         }
         CROSSFADE_ID => {
             value.crossfade = !value.crossfade;
@@ -773,6 +770,11 @@ fn handle_local_shortcut(app: &AppHandle, action: &str, state: &AppState) {
         ZOOM_OUT_ID => set_zoom(app, state, -0.1),
         ZOOM_RESET_ID => reset_zoom(app, state),
         RESET_SESSION_ID => reset_session(app, state),
+        DEVTOOLS_ID => {
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
+            }
+        }
         _ => {}
     }
 }
@@ -809,12 +811,12 @@ fn set_start_minimized(state: &AppState, shell: &ShellUi) {
     settings::update(&state.settings, |value| value.start_minimized = minimized);
 }
 
-fn set_zoom(app: &AppHandle, state: &AppState, delta: f64) {
+pub fn set_zoom(app: &AppHandle, state: &AppState, delta: f64) {
     let current = settings::snapshot(&state.settings).zoom;
     apply_zoom(app, state, (current + delta).clamp(0.5, 2.0));
 }
 
-fn reset_zoom(app: &AppHandle, state: &AppState) {
+pub fn reset_zoom(app: &AppHandle, state: &AppState) {
     apply_zoom(app, state, 1.0);
 }
 
@@ -825,7 +827,7 @@ fn apply_zoom(app: &AppHandle, state: &AppState, zoom: f64) {
     }
 }
 
-fn clear_cache(app: &AppHandle) {
+pub fn clear_cache(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let reload = window.clone();
         let _ = window.with_webview(move |webview| {
@@ -836,7 +838,7 @@ fn clear_cache(app: &AppHandle) {
     }
 }
 
-fn reset_session(app: &AppHandle, state: &AppState) {
+pub fn reset_session(app: &AppHandle, state: &AppState) {
     if !platform::confirm(
         "Reset YouTube Music Session",
         "This signs out of YouTube Music and clears all site data. Continue?",

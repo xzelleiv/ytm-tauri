@@ -19,6 +19,7 @@ pub struct Settings {
     pub lyrics_show_inexact: bool,
     pub lyrics_show_timecodes: bool,
     pub lyrics_romanization: bool,
+    pub lyrics_auto_sync: bool,
     pub lyrics_line_effect: String,
     pub lastfm_scrobbling: bool,
     pub lastfm_session_key: Option<String>,
@@ -37,14 +38,15 @@ pub struct Settings {
     pub playback_speed: bool,
     pub playback_rate: f64,
     pub skip_disliked: bool,
-    pub album_color_theme: bool,
     pub sponsorblock: bool,
     pub blur_nav_bar: bool,
     pub disable_autoplay: bool,
     pub video_toggle: bool,
     pub ambient_mode: bool,
-    pub skip_silences: bool,
     pub crossfade: bool,
+    pub spotify_spoof: bool,
+    pub last_notified_version: Option<String>,
+    pub last_update_check: Option<u64>,
 }
 
 impl Default for Settings {
@@ -60,7 +62,8 @@ impl Default for Settings {
             lyrics_precise_timing: true,
             lyrics_show_inexact: true,
             lyrics_show_timecodes: false,
-            lyrics_romanization: true,
+            lyrics_romanization: false,
+            lyrics_auto_sync: true,
             lyrics_line_effect: "fancy".to_string(),
             lastfm_scrobbling: false,
             lastfm_session_key: None,
@@ -79,14 +82,15 @@ impl Default for Settings {
             playback_speed: false,
             playback_rate: 1.0,
             skip_disliked: false,
-            album_color_theme: false,
             sponsorblock: true,
             blur_nav_bar: true,
             disable_autoplay: false,
             video_toggle: false,
             ambient_mode: true,
-            skip_silences: false,
             crossfade: false,
+            spotify_spoof: false,
+            last_notified_version: None,
+            last_update_check: None,
         }
     }
 }

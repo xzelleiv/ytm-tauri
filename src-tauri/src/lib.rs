@@ -37,14 +37,13 @@ const EXPONENTIAL_VOLUME_SCRIPT: &str = include_str!("exponential_volume_probe.j
 const PLAYBACK_SPEED_SCRIPT: &str = include_str!("playback_speed_probe.js");
 const SKIP_DISLIKED_SCRIPT: &str = include_str!("skip_disliked_probe.js");
 const NAVIGATION_SCRIPT: &str = include_str!("navigation_probe.js");
-const ALBUM_COLOR_THEME_SCRIPT: &str = include_str!("album_color_theme_probe.js");
 const SPONSORBLOCK_SCRIPT: &str = include_str!("sponsorblock_probe.js");
 const BLUR_NAV_BAR_SCRIPT: &str = include_str!("blur_nav_bar_probe.js");
 const DISABLE_AUTOPLAY_SCRIPT: &str = include_str!("disable_autoplay_probe.js");
 const VIDEO_TOGGLE_SCRIPT: &str = include_str!("video_toggle_probe.js");
 const AMBIENT_MODE_SCRIPT: &str = include_str!("ambient_mode_probe.js");
-const SKIP_SILENCES_SCRIPT: &str = include_str!("skip_silences_probe.js");
 const CROSSFADE_SCRIPT: &str = include_str!("crossfade_probe.js");
+const SETTINGS_PROBE_SCRIPT: &str = include_str!("settings_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,7 +79,7 @@ pub fn run() {
         value.launch_at_startup = platform::startup_enabled()
     });
     let initial = settings::snapshot(&settings);
-    let presence = PresenceController::new(initial.discord_rpc);
+    let presence = PresenceController::new(initial.discord_rpc, initial.spotify_spoof);
     let scrobbler = ScrobbleController::new(settings.clone());
     let notifications = NotificationController::new(settings.clone());
     let adblock = AdBlockController::new(initial.ad_block);
@@ -99,7 +98,8 @@ pub fn run() {
         adblock,
         quitting: Arc::new(AtomicBool::new(false)),
     };
-    let state_for_events = state.clone();
+    let state_for_window_events = state.clone();
+    let state_for_features = state.clone();
     let start_minimized = std::env::args().any(|argument| argument == "--minimized");
 
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
@@ -117,17 +117,21 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .on_window_event(move |window, event| match event {
             WindowEvent::Focused(focused) if window.label() == "main" => {
-                controls::set_local_shortcuts(window.app_handle(), *focused, &state_for_events);
+                controls::set_local_shortcuts(
+                    window.app_handle(),
+                    *focused,
+                    &state_for_window_events,
+                );
             }
             WindowEvent::CloseRequested { api, .. }
-                if settings::snapshot(&state_for_events.settings).close_to_tray
-                    && !state_for_events.quitting.load(Ordering::Relaxed) =>
+                if settings::snapshot(&state_for_window_events.settings).close_to_tray
+                    && !state_for_window_events.quitting.load(Ordering::Relaxed) =>
             {
                 api.prevent_close();
                 let _ = window.hide();
             }
             WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
-                state_for_events.presence.clear();
+                state_for_window_events.presence.clear();
                 scrobbler_for_events.clear();
                 notifications_for_events.clear();
             }
@@ -148,6 +152,7 @@ pub fn run() {
                 .inner_size(1280.0, 840.0)
                 .min_inner_size(900.0, 620.0)
                 .center()
+                .devtools(true)
                 .zoom_hotkeys_enabled(false)
                 .initialization_script(initialization_script(&initial))
                 .on_navigation(move |url| {
@@ -182,7 +187,7 @@ pub fn run() {
                 .on_document_title_changed(move |window, title| {
                     if feature_bridge::is_feature_title_message(&title) {
                         if window.url().ok().as_ref().is_some_and(is_youtube_music_url) {
-                            feature_bridge::handle_title(&window, &title);
+                            feature_bridge::handle_title(&window, &title, &state_for_features);
                         }
                         return;
                     }
@@ -227,6 +232,7 @@ pub fn run() {
                 })
                 .build()?;
             let windows_settings = state.settings.clone();
+            let updates_settings = state.settings.clone();
             controls::install(app, state)?;
             windows_media::install(&window, windows_settings);
             let _ = window.set_zoom(initial.zoom.clamp(0.5, 2.0));
@@ -235,7 +241,7 @@ pub fn run() {
             if start_minimized {
                 let _ = window.hide();
             }
-            updates::check_in_background(true);
+            updates::check(app.handle(), &updates_settings, updates::CheckMode::Startup);
 
             Ok(())
         })
@@ -253,7 +259,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
         page_feature_config(settings)
     );
     let page_features = format!(
-        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{ALBUM_COLOR_THEME_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{SKIP_SILENCES_SCRIPT}\n{CROSSFADE_SCRIPT}"
+        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{CROSSFADE_SCRIPT}\n{SETTINGS_PROBE_SCRIPT}"
     );
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
@@ -267,12 +273,25 @@ fn initialization_script(settings: &settings::Settings) -> String {
 
 pub fn page_feature_config(settings: &settings::Settings) -> String {
     serde_json::json!({
+        "discord_rpc": settings.discord_rpc,
+        "ad_block": settings.ad_block,
+        "close_to_tray": settings.close_to_tray,
+        "launch_at_startup": settings.launch_at_startup,
+        "start_minimized": settings.start_minimized,
+        "zoom": settings.zoom,
         "synced_lyrics": settings.synced_lyrics,
         "lyrics_precise_timing": settings.lyrics_precise_timing,
         "lyrics_show_inexact": settings.lyrics_show_inexact,
         "lyrics_show_timecodes": settings.lyrics_show_timecodes,
         "lyrics_romanization": settings.lyrics_romanization,
+        "lyrics_auto_sync": settings.lyrics_auto_sync,
         "lyrics_line_effect": settings.lyrics_line_effect,
+        "lastfm_scrobbling": settings.lastfm_scrobbling,
+        "lastfm_connected": settings.lastfm_session_key.is_some(),
+        "listenbrainz_scrobbling": settings.listenbrainz_scrobbling,
+        "listenbrainz_connected": settings.listenbrainz_token.is_some(),
+        "notifications": settings.notifications,
+        "windows_media_controls": settings.windows_media_controls,
         "custom_output_device": settings.custom_output_device,
         "output_device": settings.output_device,
         "equalizer": settings.equalizer,
@@ -284,13 +303,11 @@ pub fn page_feature_config(settings: &settings::Settings) -> String {
         "playback_speed": settings.playback_speed,
         "playback_rate": settings.playback_rate,
         "skip_disliked": settings.skip_disliked,
-        "album_color_theme": settings.album_color_theme,
         "sponsorblock": settings.sponsorblock,
         "blur_nav_bar": settings.blur_nav_bar,
         "disable_autoplay": settings.disable_autoplay,
         "video_toggle": settings.video_toggle,
         "ambient_mode": settings.ambient_mode,
-        "skip_silences": settings.skip_silences,
         "crossfade": settings.crossfade,
     })
     .to_string()
