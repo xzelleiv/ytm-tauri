@@ -28,10 +28,18 @@ function Open-MsiQuery {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $package = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'package.json') | ConvertFrom-Json
 $versionPattern = [regex]::Escape($package.version)
-$bundleRoot = Join-Path $repoRoot 'src-tauri\target\release\bundle'
+$targetRoot = if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+    Join-Path $repoRoot 'src-tauri\target'
+} elseif ([IO.Path]::IsPathRooted($env:CARGO_TARGET_DIR)) {
+    $env:CARGO_TARGET_DIR
+} else {
+    Join-Path $repoRoot $env:CARGO_TARGET_DIR
+}
+$releaseRoot = Join-Path $targetRoot 'release'
+$bundleRoot = Join-Path $releaseRoot 'bundle'
 
 $artifacts = @(
-    Get-Item -LiteralPath (Join-Path $repoRoot 'src-tauri\target\release\yt-music-tauri.exe')
+    Get-Item -LiteralPath (Join-Path $releaseRoot 'yt-music-tauri.exe')
     Get-ChildItem -Recurse -File -LiteralPath $bundleRoot |
         Where-Object {
             $_.Extension -In @('.exe', '.msi') -and
