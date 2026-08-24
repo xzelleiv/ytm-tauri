@@ -1,17 +1,22 @@
 (() => {
+  if (typeof location === "object" && location.hostname && location.hostname !== "music.youtube.com") {
+    return;
+  }
   const runtime = window.__ytmFeatures;
   if (!runtime) return;
 
-  const PROVIDERS = ["LRCLib", "YTMusic", "MusixMatch", "Megalobiz", "LyricsGenius"];
+  const PROVIDERS = ["YTMusic", "LRCLib"];
   const STYLE_ID = "ytm-tauri-synced-lyrics-style";
   const CONTAINER_ID = "synced-lyrics-container";
   const STAR_KEY = "ytmd-sl-starred-";
   const CACHE = new Map();
 
   let headerObserver = null;
+  let observedHeader = null;
   let updateInterval = 0;
   let trackPollInterval = 0;
   let activeTrack = null;
+  let currentTrackEpoch = 0;
   let currentProvider = PROVIDERS[0];
   let manuallySwitched = false;
   let renderVersion = 0;
@@ -19,28 +24,21 @@
   let isUserScrolling = false;
   let userScrollTimeout = 0;
 
-  let musixmatchToken = null;
-  let musixmatchTokenExpires = 0;
-  let musixmatchCookie = "x-mxm-user-id=";
-
   const state = () => CACHE.get(activeTrack?.videoId)?.providers || null;
   const config = () => runtime.config || {};
   const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
 
   const styles = `
 /* hide static lyrics */
-ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *:not(#${CONTAINER_ID}),
-#tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *:not(#${CONTAINER_ID}),
-#tab-renderer > ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *:not(#${CONTAINER_ID}),
-ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] ytmusic-description-shelf-renderer,
-ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] ytmusic-music-description-shelf-renderer,
-ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] yt-formatted-string.description {
+#tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *,
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > *,
+ytmusic-player-page ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > * {
   display: none !important;
 }
 
-ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
 #tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
-#tab-renderer > ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
+ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
+ytmusic-player-page ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'] > #${CONTAINER_ID},
 #${CONTAINER_ID} {
   display: flex !important;
   flex-direction: column !important;
@@ -491,46 +489,135 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     if (!title) return "";
     return title
       .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
-      .replace(/\s*-\s*(official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft).*$/gi, " ")
+      .replace(/\s*-\s*(official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft|special edition|deluxe).*$/gi, " ")
       .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
   }
 
-  function getPlayer() {
-    return document.querySelector("#movie_player, .html5-video-player, ytmusic-player");
+  function cleanArtist(artist) {
+    if (!artist) return "";
+    return artist
+      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
+      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  function trackInfo() {
+  const suffixesToRemove = [
+    // artist names
+    /\s*(- topic)$/i,
+    /\s*vevo$/i,
+    // video titles
+    /\s*[(|[]official(.*?)[)|\]]/i,
+    /\s*[(|[]((lyrics?|visualizer|audio)\s*(video)?)[)|\]]/i,
+    /\s*[(|[](performance video)[)|\]]/i,
+    /\s*[(|[](clip official)[)|\]]/i,
+    /\s*[(|[](video version)[)|\]]/i,
+    /\s*[(|[](HD|HQ)\s*?(?:audio)?[)|\]]$/i,
+    /\s*[(|[](live)[)|\]]$/i,
+    /\s*[(|[]4K\s*?(?:upgrade)?[)|\]]$/i,
+  ];
+
+  function cleanupName(name) {
+    if (!name) return "";
+    let str = String(name);
+    for (const suffix of suffixesToRemove) {
+      str = str.replace(suffix, "");
+    }
+    return str.trim();
+  }
+
+  function getPlayer() {
+    return document.getElementById("movie_player") || document.querySelector("#movie_player, .html5-video-player");
+  }
+
+  function trackInfo(override) {
+    if (override && override.title) {
+      const title = clean(cleanupName(override.title));
+      const artist = clean(cleanupName(override.artist || ""));
+      const album = clean(override.album || "");
+      const duration = Number(override.duration_seconds || 0);
+      let videoId = "";
+      if (override.url) {
+        try {
+          videoId = new URL(override.url, location.origin).searchParams.get("v") || "";
+        } catch {}
+      }
+      if (!videoId) {
+        const watchHref = document.querySelector("ytmusic-player-bar .title a, ytmusic-player-bar a[href*='watch?v='], ytmusic-player-bar a[href*='v=']")?.getAttribute("href");
+        if (watchHref) {
+          try {
+            videoId = new URL(watchHref, location.origin).searchParams.get("v") || "";
+          } catch {}
+        }
+      }
+      if (!videoId) {
+        videoId = title ? `${artist}-${title}` : "";
+      }
+      return {
+        videoId,
+        title,
+        alternativeTitle: "",
+        artist,
+        album,
+        songDuration: duration,
+        tags: [],
+      };
+    }
+
     const player = getPlayer();
-    const videoData = player?.getVideoData?.();
-    const playerResponse = player?.getPlayerResponse?.();
     const media = runtime.media();
 
     let title = clean(
-      videoData?.title ||
-      navigator.mediaSession?.metadata?.title ||
-      document.querySelector("ytmusic-player-bar .title")?.textContent ||
-      document.querySelector("ytmusic-player-bar yt-formatted-string.title")?.textContent
+      cleanupName(
+        navigator.mediaSession?.metadata?.title ||
+        document.querySelector("ytmusic-player-bar .title")?.textContent ||
+        document.querySelector("ytmusic-player-bar yt-formatted-string.title")?.textContent ||
+        player?.getVideoData?.()?.title
+      )
     );
     let artist = clean(
-      videoData?.author ||
-      navigator.mediaSession?.metadata?.artist ||
-      document.querySelector("ytmusic-player-bar .byline a")?.textContent ||
-      document.querySelector("ytmusic-player-bar .byline")?.textContent?.split(/[•·]/)[0]
+      cleanupName(
+        navigator.mediaSession?.metadata?.artist ||
+        document.querySelector("ytmusic-player-bar .byline a")?.textContent ||
+        document.querySelector("ytmusic-player-bar .byline")?.textContent?.split(/[•·]/)[0] ||
+        player?.getVideoData?.()?.author
+      )
     );
     let album = clean(
-      playerResponse?.videoDetails?.album ||
       navigator.mediaSession?.metadata?.album ||
+      document.querySelector("ytmusic-player-bar .byline")?.textContent?.split(/[•·]/)[1] ||
+      player?.getPlayerResponse?.()?.videoDetails?.album ||
       ""
     );
     const duration = Number(
-      videoData?.length_seconds ||
-      playerResponse?.videoDetails?.lengthSeconds ||
       media?.duration ||
+      player?.getVideoData?.()?.length_seconds ||
+      player?.getPlayerResponse?.()?.videoDetails?.lengthSeconds ||
       0
     );
-    const videoId = videoData?.video_id || new URL(location.href).searchParams.get("v") || (title ? `${artist}-${title}` : "");
+
+    let videoId = "";
+    const watchHref = document.querySelector("ytmusic-player-bar .title a, ytmusic-player-bar a[href*='watch?v='], ytmusic-player-bar a[href*='v=']")?.getAttribute("href");
+    if (watchHref) {
+      try {
+        videoId = new URL(watchHref, location.origin).searchParams.get("v") || "";
+      } catch {}
+    }
+    if (!videoId) {
+      try {
+        videoId = new URL(location.href).searchParams.get("v") || "";
+      } catch {}
+    }
+    if (!videoId) {
+      videoId = player?.getVideoData?.()?.video_id || "";
+    }
+    if (!videoId) {
+      videoId = title ? `${artist}-${title}` : "";
+    }
+
+    const playerResponse = player?.getPlayerResponse?.();
     const alternativeTitle = clean(
       playerResponse?.microformat?.microformatDataRenderer?.linkAlternates?.find?.((l) => l.title)?.title || ""
     );
@@ -575,7 +662,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     } catch {}
   }
 
-  function ensureTrack(info) {
+  function ensureTrack(info, epoch = currentTrackEpoch) {
     let entry = CACHE.get(info.videoId);
     if (!entry) {
       const starred = readStarred(info.videoId);
@@ -588,14 +675,23 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       };
       CACHE.set(info.videoId, entry);
       currentProvider = initialProvider;
-      for (const name of PROVIDERS) fetchProvider(name, info, entry);
-    } else if (entry.selectedProvider) {
-      currentProvider = entry.selectedProvider;
+      for (const name of PROVIDERS) fetchProvider(name, info, entry, epoch);
+    } else {
+      if (entry.selectedProvider) {
+        currentProvider = entry.selectedProvider;
+      }
+      // recover aborted fetch
+      for (const name of PROVIDERS) {
+        const p = entry.providers[name];
+        if (!p || (p.state === "fetching" && !p.data)) {
+          fetchProvider(name, info, entry, epoch);
+        }
+      }
     }
     return entry;
   }
 
-  async function fetchProvider(name, info, entry) {
+  async function fetchProvider(name, info, entry, epoch = currentTrackEpoch) {
     const provider = entry.providers[name];
     if (provider.state === "done" && provider.data) {
       return;
@@ -603,7 +699,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     provider.state = "fetching";
     provider.data = null;
     provider.error = null;
-    render();
+    if (epoch === currentTrackEpoch) {
+      render();
+    }
     try {
       const data = await providerSearch(name, info);
       provider.state = "done";
@@ -613,10 +711,12 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       provider.error = error instanceof Error ? error : new Error(String(error));
     }
     entry.status = PROVIDERS.every((providerName) => entry.providers[providerName].state !== "fetching") ? "done" : "loading";
-    if (!entry.selectedProvider || !usable(entry.selectedProvider)) {
-      autoPickProvider();
+    if (epoch === currentTrackEpoch) {
+      if (!entry.selectedProvider || !usable(entry.selectedProvider)) {
+        autoPickProvider();
+      }
+      render();
     }
-    render();
   }
 
   function providerBias(name) {
@@ -696,126 +796,168 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
   function providerSearch(name, info) {
     switch (name) {
-      case "LRCLib": return fetchLrcLib(info);
       case "YTMusic": return fetchYtmLyrics(info);
-      case "MusixMatch": return fetchMusixMatch(info);
-      case "Megalobiz": return fetchMegalobiz(info);
-      case "LyricsGenius": return fetchGenius(info);
+      case "LRCLib": return fetchLrcLib(info);
       default: return Promise.resolve(null);
     }
   }
 
   async function directFetchJson(url) {
+    const headers = { "Lrclib-Client": "ytm-tauri/0.2.1 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
-      const res = await window.fetch(url);
+      const res = await window.fetch(url, { headers });
       if (res.ok) {
         return await res.json();
       }
     } catch {
       // fallback
     }
-    return requestJson(url);
+    return requestJson(url, { headers });
+  }
+
+  function dice(first, second) {
+    if (!first || !second) return 0;
+    if (first === second) return 1;
+    if (first.length < 2 || second.length < 2) return 0;
+    const firstBigrams = new Map();
+    for (let i = 0; i < first.length - 1; i++) {
+      const bigram = first.substring(i, i + 2);
+      firstBigrams.set(bigram, (firstBigrams.get(bigram) || 0) + 1);
+    }
+    let intersectionSize = 0;
+    for (let i = 0; i < second.length - 1; i++) {
+      const bigram = second.substring(i, i + 2);
+      const count = firstBigrams.get(bigram) || 0;
+      if (count > 0) {
+        firstBigrams.set(bigram, count - 1);
+        intersectionSize++;
+      }
+    }
+    return (2.0 * intersectionSize) / (first.length + second.length - 2);
+  }
+
+  function scoreCandidate(itemArtist, itemTitle, itemDuration, info) {
+    if (!itemArtist || !itemTitle) return -1;
+    const cleanTargetTitle = cleanSongTitle(info.title).toLowerCase();
+    const rawTargetTitle = String(info.title || "").toLowerCase();
+    const cleanTargetArtist = cleanArtist(info.artist).toLowerCase();
+    const rawTargetArtist = String(info.artist || "").toLowerCase();
+
+    const candTitle = cleanSongTitle(itemTitle).toLowerCase();
+    const candArtist = cleanArtist(itemArtist).toLowerCase();
+
+    const titleSim = Math.max(
+      dice(cleanTargetTitle, candTitle),
+      dice(rawTargetTitle, candTitle),
+      dice(cleanTargetTitle, itemTitle.toLowerCase()),
+      jaroWinkler(cleanTargetTitle, candTitle),
+      jaroWinkler(rawTargetTitle, candTitle)
+    );
+    const artistSim = Math.max(
+      dice(cleanTargetArtist, candArtist),
+      dice(rawTargetArtist, candArtist),
+      dice(cleanTargetArtist, itemArtist.toLowerCase()),
+      jaroWinkler(cleanTargetArtist, candArtist),
+      jaroWinkler(rawTargetArtist, candArtist)
+    );
+
+    if (titleSim < 0.65 || artistSim < 0.55) return -1;
+
+    let score = titleSim * 0.6 + artistSim * 0.4;
+    if (info.songDuration > 0 && itemDuration > 0) {
+      const diff = Math.abs(itemDuration - info.songDuration);
+      if (diff < 5) score += 0.1;
+      else if (diff > 30) score -= 0.2;
+    }
+    return score;
   }
 
   async function fetchLrcLib(info) {
-    let query = new URLSearchParams({
-      artist_name: info.artist,
-      track_name: info.title,
-    });
-    if (info.album) {
-      query.set("album_name", info.album);
-    }
+    const cleanTitle = cleanSongTitle(info.title);
+    const cleanArt = cleanArtist(info.artist);
 
-    let url = `https://lrclib.net/api/search?${query.toString()}`;
-    let data = await directFetchJson(url);
+    // exact signature lookup
+    if (cleanTitle && cleanArt) {
+      const getParams = new URLSearchParams({
+        track_name: cleanTitle,
+        artist_name: cleanArt,
+      });
+      if (info.album) getParams.set("album_name", info.album);
+      if (info.songDuration > 0) getParams.set("duration", String(Math.round(info.songDuration)));
 
-    if (!Array.isArray(data) || data.length === 0) {
-      const trackName = info.alternativeTitle || info.title;
-      query = new URLSearchParams({ q: trackName });
-      url = `https://lrclib.net/api/search?${query.toString()}`;
-      data = await directFetchJson(url);
-
-      if ((!Array.isArray(data) || data.length === 0) && info.alternativeTitle) {
-        query = new URLSearchParams({ q: info.title });
-        url = `https://lrclib.net/api/search?${query.toString()}`;
-        data = await directFetchJson(url);
-      }
-    }
-
-    if (!Array.isArray(data) || data.length === 0) {
-      const cleanTitle = cleanSongTitle(info.title);
-      if (cleanTitle && cleanTitle !== info.title) {
-        query = new URLSearchParams({ q: `${info.artist} ${cleanTitle}` });
-        url = `https://lrclib.net/api/search?${query.toString()}`;
-        data = await directFetchJson(url);
-      }
-    }
-
-    if (!Array.isArray(data) || data.length === 0) {
-      return null;
-    }
-
-    const filteredResults = [];
-    for (const item of data) {
-      const { artistName } = item;
-      if (!artistName) continue;
-
-      const artists = info.artist.split(/[&,]/g).map((i) => i.trim());
-      const itemArtists = artistName.split(/[&,]/g).map((i) => i.trim());
-
-      const permutations = [];
-      for (const artistA of artists) {
-        for (const artistB of itemArtists) {
-          permutations.push([artistA.toLowerCase(), artistB.toLowerCase()]);
-        }
-      }
-      for (const artistA of itemArtists) {
-        for (const artistB of artists) {
-          permutations.push([artistA.toLowerCase(), artistB.toLowerCase()]);
-        }
-      }
-
-      let ratio = Math.max(...permutations.map(([x, y]) => jaroWinkler(x, y)));
-
-      if (ratio <= 0.85 && info.tags && info.tags.length > 0) {
-        const filteredTags = info.tags.filter((tag) => tag.toLowerCase() !== info.artist.toLowerCase());
-        const tagPermutations = [];
-        for (const tag of filteredTags) {
-          for (const itemArtist of itemArtists) {
-            tagPermutations.push([tag.toLowerCase(), itemArtist.toLowerCase()]);
+      const getUrl = `https://lrclib.net/api/get?${getParams.toString()}`;
+      const exact = await directFetchJson(getUrl);
+      if (exact && typeof exact === "object" && !Array.isArray(exact)) {
+        if (!exact.instrumental && (exact.syncedLyrics || exact.plainLyrics)) {
+          const score = scoreCandidate(exact.artistName, exact.trackName, exact.duration || 0, info);
+          if (score > 0) {
+            const lines = exact.syncedLyrics ? parseLrc(exact.syncedLyrics).lines : null;
+            return {
+              title: exact.trackName || info.title,
+              artists: [exact.artistName || info.artist],
+              lines,
+              lyrics: exact.plainLyrics || null,
+            };
           }
         }
-        for (const itemArtist of itemArtists) {
-          for (const tag of filteredTags) {
-            tagPermutations.push([itemArtist.toLowerCase(), tag.toLowerCase()]);
-          }
-        }
-        if (tagPermutations.length > 0) {
-          const tagRatio = Math.max(...tagPermutations.map(([x, y]) => jaroWinkler(x, y)));
-          ratio = Math.max(ratio, tagRatio);
-        }
       }
-
-      if (ratio <= 0.85) continue;
-      filteredResults.push(item);
     }
 
-    if (!filteredResults.length && data.length > 0) {
-      filteredResults.push(...data.filter((item) => !item.instrumental && (item.syncedLyrics || item.plainLyrics)));
+    let data = [];
+
+    // structured clean query
+    if (cleanTitle) {
+      const query = new URLSearchParams({
+        artist_name: cleanArt || info.artist,
+        track_name: cleanTitle,
+      });
+      if (info.album) {
+        query.set("album_name", info.album);
+      }
+      const url = `https://lrclib.net/api/search?${query.toString()}`;
+      const res = await directFetchJson(url);
+      if (Array.isArray(res) && res.length > 0) {
+        data = res;
+      }
     }
 
-    filteredResults.sort((a, b) => {
-      const left = Math.abs((a.duration || 0) - info.songDuration);
-      const right = Math.abs((b.duration || 0) - info.songDuration);
-      return left - right;
-    });
-
-    const closestResult = filteredResults[0];
-    if (!closestResult) return null;
-    if (info.songDuration > 0 && Math.abs(closestResult.duration - info.songDuration) > 20) {
-      if (!closestResult.syncedLyrics && !closestResult.plainLyrics) return null;
+    // structured raw query
+    if (!data.length && info.title) {
+      const query = new URLSearchParams({
+        artist_name: info.artist,
+        track_name: info.title,
+      });
+      const url = `https://lrclib.net/api/search?${query.toString()}`;
+      const res = await directFetchJson(url);
+      if (Array.isArray(res) && res.length > 0) {
+        data = res;
+      }
     }
-    if (closestResult.instrumental) return null;
+
+    // fallback query
+    if (!data.length) {
+      const q = `${cleanArt || info.artist} ${cleanTitle || info.title}`.trim();
+      const query = new URLSearchParams({ q });
+      const url = `https://lrclib.net/api/search?${query.toString()}`;
+      const res = await directFetchJson(url);
+      if (Array.isArray(res) && res.length > 0) {
+        data = res;
+      }
+    }
+
+    if (!data.length) return null;
+
+    const scored = data
+      .filter((item) => !item.instrumental && (item.syncedLyrics || item.plainLyrics))
+      .map((item) => ({
+        item,
+        score: scoreCandidate(item.artistName, item.trackName, item.duration || 0, info),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    if (!scored.length) return null;
+    const closestResult = scored[0].item;
 
     const raw = closestResult.syncedLyrics;
     const plain = closestResult.plainLyrics;
@@ -868,164 +1010,6 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     return { title: info.title, artists: [info.artist], lines, lyrics };
   }
 
-  async function fetchMegalobiz(info) {
-    const query = new URLSearchParams({
-      qry: `${info.artist} ${info.title}`,
-    });
-    const searchRes = await runtime.request(`https://www.megalobiz.com/search/all?${query.toString()}`);
-    if (!searchRes?.ok || !searchRes.body) return null;
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(searchRes.body, "text/html");
-    const anchors = Array.from(doc.querySelectorAll('a.entity_name[href^="/lrc/maker/"][name][title]'));
-    if (!anchors.length) return null;
-
-    function removeNoise(t) {
-      return String(t || "")
-        .replace(/\[.*?\]/g, "")
-        .replace(/\(.*?\)/g, "")
-        .trim()
-        .replace(/(^[-•])|([-•]$)/g, "")
-        .trim()
-        .replace(/\s+by$/, "");
-    }
-
-    const searchResults = anchors.map((anchor) => {
-      const titleAttr = anchor.getAttribute("title") || "";
-      const match = titleAttr.match(/\[(?<minutes>\d+):(?<seconds>\d+)\.(?<millis>\d+)\]/);
-      if (!match?.groups) return null;
-      const { minutes, seconds, millis } = match.groups;
-      let name = anchor.getAttribute("name") || "";
-      const feat = name.match(/\(?[Ff]eat\. (.+)\)?/)?.[1] || "";
-      const dash = name.match(/(.*?)\s+[-•]\s+(.*)/);
-      const by = name.match(/(.*?)\s+by\s+(.*)/);
-      const artists = [
-        removeNoise(feat),
-        ...(dash ? dash[1].split(/[&,]/).map(removeNoise) : []),
-        ...(by ? by[2].split(/[&,]/).map(removeNoise) : []),
-      ].filter(Boolean);
-
-      for (const art of artists) {
-        name = name.replace(art, "");
-        name = removeNoise(name);
-      }
-
-      return {
-        title: name || anchor.getAttribute("name"),
-        artists,
-        href: anchor.getAttribute("href"),
-        duration: parseInt(minutes, 10) * 60 + parseInt(seconds, 10) + (parseInt(millis, 10) / 1000),
-      };
-    }).filter(Boolean);
-
-    if (!searchResults.length) return null;
-    searchResults.sort((a, b) => Math.abs(a.duration - info.songDuration) - Math.abs(b.duration - info.songDuration));
-    const closest = searchResults[0];
-    if (!closest || (info.songDuration > 0 && Math.abs(closest.duration - info.songDuration) > 20)) {
-      return null;
-    }
-
-    const pageRes = await runtime.request(`https://www.megalobiz.com${closest.href}`);
-    if (!pageRes?.ok || !pageRes.body) return null;
-    const lyricsDoc = parser.parseFromString(pageRes.body, "text/html");
-    const raw = lyricsDoc.querySelector('span[id^="lrc_"][id$="_lyrics"]')?.textContent;
-    if (!raw) return null;
-
-    const parsed = parseLrc(raw);
-    return {
-      title: closest.title || info.title,
-      artists: closest.artists.length ? closest.artists : [info.artist],
-      lines: parsed.lines?.length ? parsed.lines : null,
-      lyrics: raw,
-    };
-  }
-
-  async function fetchGenius(info) {
-    const query = new URLSearchParams({ q: `${info.artist} ${info.title}` });
-    const search = await requestJson(`https://genius.com/api/search/multi?${query}`);
-    const sections = search?.response?.sections || [];
-    const hits = sections.flatMap((section) => (section.type === "song" ? section.hits || [] : []));
-    if (!hits.length) return null;
-    hits.sort((left, right) => geniusPoints(right.result, info) - geniusPoints(left.result, info));
-    const hit = hits[0]?.result;
-    if (!hit?.path) return null;
-    const page = await runtime.request(`https://genius.com${hit.path}`);
-    if (!page?.ok || !page.body) return null;
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(page.body, "text/html");
-    const containers = doc.querySelectorAll('[data-lyrics-container="true"]');
-    if (!containers.length) return null;
-    const text = Array.from(containers)
-      .map((item) => item.textContent?.replace(/\n\n+/g, "\n") || "")
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-    return { title: hit.title || info.title, artists: [hit.primary_artist?.name || info.artist], lines: null, lyrics: text || null };
-  }
-
-  async function fetchMusixMatch(info) {
-    await initMusixmatch();
-    if (!musixmatchToken) return null;
-    const params = new URLSearchParams({
-      app_id: "web-desktop-app-v1.0",
-      usertoken: musixmatchToken,
-      q_track: info.title,
-      q_artist: info.artist,
-      page_size: "5",
-    });
-    const search = await musixmatchRequest(`track.search?${params}`);
-    const trackList = search?.body ? JSON.parse(search.body)?.message?.body?.track_list : [];
-    if (!Array.isArray(trackList) || !trackList.length) return null;
-    const track = trackList
-      .map((item) => item.track)
-      .sort((left, right) => jaroWinkler(right.track_name, info.title) - jaroWinkler(left.track_name, info.title))[0];
-    if (!track?.track_id) return null;
-
-    let lines = null;
-    if (track.has_subtitles) {
-      const subParams = new URLSearchParams({
-        app_id: "web-desktop-app-v1.0",
-        usertoken: musixmatchToken,
-        track_id: String(track.track_id),
-        subtitle_format: "lrc",
-      });
-      const sub = await musixmatchRequest(`track.subtitle.get?${subParams}`);
-      const body = sub?.body ? JSON.parse(sub.body)?.message?.body?.subtitle?.subtitle_body : "";
-      if (body) lines = parseLrc(body).lines;
-    }
-
-    let lyrics = null;
-    if (!lines && track.has_lyrics) {
-      const lyricParams = new URLSearchParams({
-        app_id: "web-desktop-app-v1.0",
-        usertoken: musixmatchToken,
-        track_id: String(track.track_id),
-      });
-      const lyricRes = await musixmatchRequest(`track.lyrics.get?${lyricParams}`);
-      lyrics = lyricRes?.body ? JSON.parse(lyricRes.body)?.message?.body?.lyrics?.lyrics_body : null;
-    }
-
-    if (!lines && !lyrics) return null;
-    return { title: track.track_name || info.title, artists: [track.artist_name || info.artist], lines, lyrics };
-  }
-
-  async function initMusixmatch() {
-    if (musixmatchToken && musixmatchTokenExpires > Date.now()) return;
-    const params = new URLSearchParams({ app_id: "web-desktop-app-v1.0" });
-    const response = await musixmatchRequest(`token.get?${params}`);
-    const parsed = response?.body ? JSON.parse(response.body) : null;
-    musixmatchToken = parsed?.message?.body?.user_token || null;
-    musixmatchTokenExpires = Date.now() + 60_000;
-  }
-
-  async function musixmatchRequest(path) {
-    const response = await runtime.request(`https://apic-desktop.musixmatch.com/ws/1.1/${path}`, {
-      headers: { Cookie: musixmatchCookie, Authority: "apic-desktop.musixmatch.com" },
-    });
-    const cookie = Object.entries(response?.headers || {}).find(([name]) => name.toLowerCase() === "set-cookie")?.[1];
-    if (cookie) musixmatchCookie = cookie;
-    return response;
-  }
-
   async function requestJson(url, init) {
     const response = await runtime.request(url, init);
     if (!response?.ok || !response.body) return null;
@@ -1034,10 +1018,6 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     } catch {
       return null;
     }
-  }
-
-  function geniusPoints(result, info) {
-    return (result?.title === info.title ? 1 : 0) + (result?.primary_artist?.name?.includes(info.artist) ? 1 : 0);
   }
 
   function parseLrc(text) {
@@ -1158,8 +1138,6 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
   function ensureContainer() {
     let container = document.getElementById(CONTAINER_ID);
-    if (container && document.body.contains(container)) return container;
-
     const tabRenderer = getLyricsTabRenderer();
     if (!tabRenderer) return null;
 
@@ -1167,7 +1145,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       container = document.createElement("div");
       container.id = CONTAINER_ID;
     }
-    tabRenderer.appendChild(container);
+    if (container.parentElement !== tabRenderer) {
+      tabRenderer.appendChild(container);
+    }
     return container;
   }
 
@@ -1186,7 +1166,11 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       });
     }
 
-    if (!headerObserver) {
+    if (observedHeader !== header) {
+      if (headerObserver) {
+        headerObserver.disconnect();
+      }
+      observedHeader = header;
       headerObserver = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
           if (mutation.attributeName === "disabled") {
@@ -1201,12 +1185,52 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     }
   }
 
+  let isProgrammaticScroll = false;
+  let programmaticScrollTimer = null;
+
+  function scrollToLineIndex(index, behavior = "smooth") {
+    const container = document.getElementById(CONTAINER_ID);
+    if (!container) return;
+    const lines = container.querySelectorAll(".synced-line");
+    if (index >= 0 && lines[index]) {
+      const vlist = container.querySelector(".synced-lyrics-vlist");
+      if (vlist) {
+        const target = lines[index];
+        const top = target.offsetTop - vlist.clientHeight * 0.38;
+        isProgrammaticScroll = true;
+        if (programmaticScrollTimer) window.clearTimeout(programmaticScrollTimer);
+        vlist.scrollTo({ top: Math.max(0, top), behavior });
+        programmaticScrollTimer = window.setTimeout(() => {
+          isProgrammaticScroll = false;
+        }, 500);
+      }
+    }
+  }
+
+  function scrollToActiveLine() {
+    if (isUserScrolling) return;
+    const current = state()?.[currentProvider]?.data?.lines;
+    if (!current?.length) return;
+
+    const player = getPlayer();
+    const currentTimeSec = typeof player?.getCurrentTime === "function"
+      ? player.getCurrentTime()
+      : (runtime.media()?.currentTime || 0);
+    const currentTimeMs = currentTimeSec * 1000;
+    const currentIndex = current.findLastIndex((line) => line.timeInMs <= currentTimeMs);
+    scrollToLineIndex(currentIndex);
+  }
+
   function onUserScroll() {
+    if (isProgrammaticScroll) return;
     isUserScrolling = true;
     if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
-    userScrollTimeout = window.setTimeout(() => {
-      isUserScrolling = false;
-    }, 4000);
+    if (config().lyrics_auto_sync !== false) {
+      userScrollTimeout = window.setTimeout(() => {
+        isUserScrolling = false;
+        scrollToActiveLine();
+      }, 3000);
+    }
   }
 
   function applyEffect() {
@@ -1421,7 +1445,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       const text = document.createElement("div");
       text.className = "text-lyrics";
       text.style.setProperty("--lyrics-duration", `${Math.max(line.duration, 1000) / 1000}s`, "important");
-      text.addEventListener("click", () => seek(line.timeInMs, lineEl));
+      text.addEventListener("click", () => seekToLine(line.timeInMs));
 
       if (config().lyrics_show_timecodes && line.time) {
         const time = document.createElement("span");
@@ -1441,7 +1465,8 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       });
       text.appendChild(wordsWrap);
 
-      if (config().lyrics_romanization && line.text && !isInstrumental) {
+      const isNonLatin = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff\uac00-\ud7af]/.test(line.text);
+      if (config().lyrics_romanization && line.text && isNonLatin && !isInstrumental) {
         const romaji = document.createElement("span");
         romaji.className = "romaji";
         const rWords = line.text.split(" ");
@@ -1461,19 +1486,21 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     updateCurrentLine();
   }
 
-  function seek(timeInMs, lineEl) {
+  function seekToLine(timeInMs) {
     isUserScrolling = false;
-    if (lineEl) {
-      lineEl.classList.add("line-seek-pulse");
-      window.setTimeout(() => lineEl.classList.remove("line-seek-pulse"), 400);
+    if (userScrollTimeout) {
+      window.clearTimeout(userScrollTimeout);
+      userScrollTimeout = null;
     }
     const player = getPlayer();
     if (typeof player?.seekTo === "function") {
       player.seekTo((timeInMs + 10) / 1000);
-      return;
+    } else {
+      const media = runtime.media();
+      if (media) media.currentTime = Math.max(0, (timeInMs + 10) / 1000);
     }
-    const media = runtime.media();
-    if (media) media.currentTime = Math.max(0, (timeInMs + 10) / 1000);
+    lastCurrentIndex = -1;
+    updateCurrentLine();
   }
 
   function updateCurrentLine() {
@@ -1500,24 +1527,46 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     });
 
     if (currentIndex >= 0 && lines[currentIndex] && !isUserScrolling) {
-      const vlist = container.querySelector(".synced-lyrics-vlist");
-      if (vlist) {
-        const target = lines[currentIndex];
-        const top = target.offsetTop - vlist.clientHeight * 0.38;
-        vlist.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
-      }
+      scrollToLineIndex(currentIndex);
     }
   }
 
-  function refreshTrack() {
-    const info = trackInfo();
-    if (!info) return;
+  let trackEventListener = null;
+  let navigateListener = null;
 
-    if (activeTrack?.videoId !== info.videoId || activeTrack?.title !== info.title) {
+  function invalidateActiveTrack() {
+    currentTrackEpoch++;
+    isUserScrolling = false;
+    if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
+    activeTrack = null;
+    manuallySwitched = false;
+    lastCurrentIndex = -1;
+    render();
+  }
+
+  function refreshTrack(force = false, override = null) {
+    const info = trackInfo(override);
+    if (!info) {
+      if (activeTrack) {
+        invalidateActiveTrack();
+      }
+      return;
+    }
+
+    const isDifferent =
+      activeTrack?.videoId !== info.videoId ||
+      activeTrack?.title !== info.title ||
+      activeTrack?.artist !== info.artist;
+
+    if (isDifferent || force) {
+      currentTrackEpoch++;
+      const epoch = currentTrackEpoch;
+      isUserScrolling = false;
+      if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
       activeTrack = info;
       manuallySwitched = false;
       lastCurrentIndex = -1;
-      ensureTrack(info);
+      ensureTrack(info, epoch);
       render();
     }
   }
@@ -1531,14 +1580,36 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     if (player && !player.__ytmSyncedLyricsBound) {
       player.__ytmSyncedLyricsBound = true;
       player.addEventListener("videodatachange", () => refreshTrack());
+      player.addEventListener("emptied", () => invalidateActiveTrack());
     }
 
-    updateInterval = window.setInterval(updateCurrentLine, config().lyrics_precise_timing ? 100 : 250);
-    trackPollInterval = window.setInterval(() => {
+    trackEventListener = (event) => refreshTrack(true, event?.detail);
+    window.addEventListener("ytm-track-change", trackEventListener);
+
+    const media = runtime.media();
+    if (media) {
+      media.addEventListener("emptied", invalidateActiveTrack);
+    }
+
+    navigateListener = () => {
       setupHeaderObserver();
       refreshTrack();
       ensureContainer();
-    }, 1000);
+    };
+    document.addEventListener("yt-navigate-finish", navigateListener);
+
+    updateInterval = window.setInterval(updateCurrentLine, config().lyrics_precise_timing ? 100 : 250);
+    trackPollInterval = window.setInterval(() => {
+      const p = getPlayer();
+      if (p && !p.__ytmSyncedLyricsBound) {
+        p.__ytmSyncedLyricsBound = true;
+        p.addEventListener("videodatachange", () => refreshTrack());
+        p.addEventListener("emptied", () => invalidateActiveTrack());
+      }
+      setupHeaderObserver();
+      refreshTrack();
+      ensureContainer();
+    }, 500);
 
     render();
   }
@@ -1546,6 +1617,19 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   function stop() {
     if (headerObserver) headerObserver.disconnect();
     headerObserver = null;
+    observedHeader = null;
+    if (trackEventListener) {
+      window.removeEventListener("ytm-track-change", trackEventListener);
+      trackEventListener = null;
+    }
+    if (navigateListener) {
+      document.removeEventListener("yt-navigate-finish", navigateListener);
+      navigateListener = null;
+    }
+    const media = runtime.media();
+    if (media) {
+      media.removeEventListener("emptied", invalidateActiveTrack);
+    }
     window.clearInterval(updateInterval);
     window.clearInterval(trackPollInterval);
     const container = document.getElementById(CONTAINER_ID);
