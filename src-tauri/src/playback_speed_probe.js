@@ -76,9 +76,12 @@
   function start(config) {
     speed = clamp(Number(localStorage.getItem(STORAGE_KEY)) || Number(config.playback_rate) || 1);
     buildControl();
+    observer?.disconnect();
     const popup = document.querySelector("ytmusic-popup-container") || document.documentElement;
-    observer = new MutationObserver(attach);
-    observer.observe(popup, { childList: true, subtree: true });
+    if (popup) {
+      observer = new MutationObserver(attach);
+      observer.observe(popup, { childList: true, subtree: true });
+    }
     rateHandler = forceRate;
     runtime.media()?.addEventListener("ratechange", rateHandler);
     attach();

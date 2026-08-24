@@ -4,20 +4,41 @@
 
   const STYLE_ID = "ytm-tauri-blur-nav-bar-style";
   const css = `
+    ytmusic-player-bar {
+      background: transparent !important;
+    }
+
     #nav-bar-background,
+    #player-bar-background,
+    #layout #nav-bar-background,
+    #layout #player-bar-background,
     #header.ytmusic-item-section-renderer {
-      background: rgba(10, 10, 10, 0.45) !important;
-      backdrop-filter: blur(12px) !important;
-      -webkit-backdrop-filter: blur(12px) !important;
+      background: rgba(18, 18, 18, 0.65) !important;
+      backdrop-filter: blur(24px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
     }
 
-    ytmusic-tabs {
-      backdrop-filter: blur(12px) !important;
-      -webkit-backdrop-filter: blur(12px) !important;
+    ytmusic-tabs,
+    ytmusic-tabs.stuck,
+    #search-page #tabs.stuck {
+      background: rgba(18, 18, 18, 0.65) !important;
+      backdrop-filter: blur(20px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
     }
 
-    ytmusic-tabs.stuck {
-      background: rgba(10, 10, 10, 0.45) !important;
+    ytmusic-menu-popup-renderer {
+      background: rgba(24, 24, 24, 0.8) !important;
+      backdrop-filter: blur(24px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+      border-radius: 12px !important;
+      border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+
+    #mini-guide-background,
+    #guide #guide-wrapper {
+      background: rgba(18, 18, 18, 0.4) !important;
+      backdrop-filter: blur(20px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
     }
 
     #nav-bar-divider {

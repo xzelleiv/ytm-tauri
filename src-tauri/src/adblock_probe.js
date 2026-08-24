@@ -1,4 +1,7 @@
 (() => {
+  if (location.hostname !== "music.youtube.com") {
+    return;
+  }
   if (window.__ytMusicTauriAdBlockInstalled) {
     return;
   }
@@ -12,6 +15,25 @@
     ytd-in-feed-ad-layout-renderer,
     ytd-promoted-sparkles-web-renderer,
     ytmusic-mealbar-promo-renderer,
+    ytmusic-guide-section-renderer:first-of-type ytmusic-guide-entry-renderer:nth-child(n+4),
+    ytmusic-guide-entry-renderer:has(a[href*="/upgrade"]),
+    ytmusic-guide-entry-renderer:has(a[href*="music_premium"]),
+    ytmusic-guide-entry-renderer:has(tp-yt-paper-item[aria-label*="Upgrade"]),
+    ytmusic-guide-entry-renderer:has([aria-label*="Upgrade"]),
+    ytmusic-guide-entry-renderer[tab-identifier="FEmusic_premium"],
+    ytmusic-mini-guide-entry-renderer:has(a[href*="/upgrade"]),
+    ytmusic-mini-guide-entry-renderer:has(a[href*="music_premium"]),
+    ytmusic-mini-guide-entry-renderer:has([aria-label*="Upgrade"]),
+    ytmusic-mini-guide-entry-renderer[tab-identifier="FEmusic_premium"],
+    ytmusic-mini-guide-renderer ytmusic-mini-guide-entry-renderer:nth-child(n+4),
+    #mini-guide #items > *:nth-child(n+4),
+    ytmusic-pivot-bar-item-renderer:has(a[href*="/upgrade"]),
+    ytmusic-pivot-bar-item-renderer:has(a[href*="music_premium"]),
+    ytmusic-compact-link-renderer:has(a[href*="/upgrade"]),
+    ytmusic-compact-link-renderer:has(a[href*="music_premium"]),
+    #guide ytmusic-guide-entry-renderer:has(a[href*="upgrade"]),
+    #mini-guide ytmusic-mini-guide-entry-renderer:has(a[href*="upgrade"]),
+    #mini-guide ytmusic-guide-entry-renderer:has(a[href*="upgrade"]),
     .html5-video-player.ad-showing .ytp-ad-module,
     .html5-video-player.ad-interrupting .ytp-ad-module {
       display: none !important;
@@ -78,7 +100,7 @@
         try {
           media.currentTime = Math.max(media.currentTime, media.duration - 0.1);
         } catch {
-          // Some ad streams reject seeking; accelerated muted playback remains.
+          // fallback seek
         }
       }
     }

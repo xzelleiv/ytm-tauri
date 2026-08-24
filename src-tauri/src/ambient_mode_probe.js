@@ -3,59 +3,73 @@
   if (!runtime) return;
 
   const STYLE_ID = "ytm-tauri-ambient-mode-style";
-  const BLUR_IMG_ID = "ytm-tauri-ambient-blur-image";
+  const BLUR_CLASS = "html5-blur-image";
 
   const css = `
-    #song-image .ytm-ambient-glow {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      width: 105%;
-      height: 105%;
-      filter: blur(80px);
-      opacity: 0.8;
+    #song-video canvas.html5-blur-canvas,
+    #song-image .html5-blur-image {
+      filter: blur(100px);
+      opacity: 1;
+      width: 100%;
+      height: 100%;
       pointer-events: none;
-      z-index: 0;
-      transition: opacity 0.5s ease;
-      border-radius: 12px;
-    }
-
-    #player:not([player-ui-state='MINIPLAYER']) {
-      overflow: visible !important;
+      position: absolute !important;
+      left: 50% !important;
+      top: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      border-radius: 8px;
     }
 
     #song-image {
-      overflow: visible !important;
       position: relative !important;
     }
 
-    #song-image > yt-img-shadow {
-      position: relative;
+    #player:not([video-mode]):not(.video-mode):not([player-ui-state='MINIPLAYER']):not([is-mweb-modernization-enabled]) {
+      width: 100%;
+      margin: 0 auto !important;
+      overflow: visible !important;
+    }
+
+    .song-button.ytmusic-av-toggle,
+    .video-button.ytmusic-av-toggle {
       z-index: 1;
+      background-color: transparent;
+    }
+
+    #side-panel.side-panel.ytmusic-player-page {
+      z-index: 0;
     }
   `;
 
   let observer = null;
+  let interval = null;
+  let lastImageSource = null;
+  let blurElement = null;
 
-  function syncAmbientArt() {
+  function syncAmbient() {
+    const layout = document.querySelector("#layout, ytmusic-app-layout");
+    const isPageOpen = layout?.hasAttribute("player-page-open");
     const songImage = document.querySelector("#song-image");
-    if (!songImage) return;
+    const image = songImage?.querySelector("yt-img-shadow > img");
 
-    const sourceImg = songImage.querySelector("yt-img-shadow > img");
-    if (!sourceImg || !sourceImg.src || sourceImg.src.startsWith("data:")) return;
-
-    let blurImg = document.getElementById(BLUR_IMG_ID);
-    if (!blurImg) {
-      blurImg = document.createElement("img");
-      blurImg.id = BLUR_IMG_ID;
-      blurImg.className = "ytm-ambient-glow";
-      songImage.prepend(blurImg);
+    if (!isPageOpen || !songImage || !image || !image.src || image.src.startsWith("data:")) {
+      if (blurElement) {
+        blurElement.remove();
+        blurElement = null;
+        lastImageSource = null;
+      }
+      return;
     }
 
-    if (blurImg.src !== sourceImg.src) {
-      blurImg.src = sourceImg.src;
+    if (blurElement && lastImageSource === image.src) return;
+
+    if (!blurElement) {
+      blurElement = document.createElement("img");
+      blurElement.className = BLUR_CLASS;
+      songImage.prepend(blurElement);
     }
+    blurElement.src = image.src;
+    lastImageSource = image.src;
   }
 
   function start() {
@@ -68,15 +82,27 @@
       if (target) target.appendChild(style);
     }
 
-    syncAmbientArt();
-    observer = new MutationObserver(syncAmbientArt);
-    observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
+    syncAmbient();
+    observer?.disconnect();
+    const playerPage = document.querySelector("#player-page") || document.documentElement;
+    if (playerPage) {
+      observer = new MutationObserver(syncAmbient);
+      observer.observe(playerPage, { attributes: true, childList: true, subtree: true });
+    }
+    if (interval) clearInterval(interval);
+    interval = setInterval(syncAmbient, 1000);
   }
 
   function stop() {
     observer?.disconnect();
     observer = null;
-    document.getElementById(BLUR_IMG_ID)?.remove();
+    if (interval) clearInterval(interval);
+    interval = null;
+    if (blurElement) {
+      blurElement.remove();
+      blurElement = null;
+    }
+    lastImageSource = null;
     document.getElementById(STYLE_ID)?.remove();
   }
 

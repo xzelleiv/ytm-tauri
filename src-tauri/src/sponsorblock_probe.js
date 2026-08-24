@@ -81,6 +81,8 @@
     }
   }
 
+  let pollInterval = null;
+
   function start() {
     attachMedia();
     onTrackChange();
@@ -94,13 +96,16 @@
       });
     }
 
-    window.setInterval(() => {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(() => {
       attachMedia();
       onTrackChange();
     }, 2000);
   }
 
   function stop() {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = null;
     if (boundMedia) {
       boundMedia.removeEventListener("timeupdate", onTimeUpdate);
       boundMedia.removeEventListener("emptied", onTrackChange);
