@@ -49,6 +49,8 @@ ytmusic-player-page ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS
   position: relative !important;
   z-index: 10 !important;
   background: transparent !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'],
@@ -314,6 +316,12 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 .synced-line .text-lyrics {
   cursor: pointer;
   padding-left: 1.5rem;
+}
+
+.text-lyrics,
+.text-lyrics * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 .text-lyrics {
@@ -803,7 +811,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   async function directFetchJson(url) {
-    const headers = { "Lrclib-Client": "ytm-tauri/0.2.1 (https://github.com/xzelleiv/ytm-tauri)" };
+    const headers = { "Lrclib-Client": "ytm-tauri/0.2.2 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
       const res = await window.fetch(url, { headers });
       if (res.ok) {

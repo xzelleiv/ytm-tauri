@@ -151,6 +151,56 @@
     for (const name of features.keys()) apply(name);
   }, { once: true });
 
+  // block context menu
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }, true);
+  }
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }, true);
+    document.addEventListener("selectstart", (e) => {
+      const tag = e.target?.tagName?.toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
+      e.preventDefault();
+      return false;
+    }, true);
+  }
+
+  if (typeof document !== "undefined" && typeof document.createElement === "function") {
+    const guardStyle = document.createElement("style");
+    guardStyle.id = "ytm-guard-style";
+    guardStyle.textContent = `
+      *, *::before, *::after {
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+        user-select: none !important;
+      }
+      input, textarea, [contenteditable="true"], [contenteditable=""] {
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+        user-select: text !important;
+      }
+    `;
+    const injectGuard = () => {
+      const target = document.head || document.documentElement || document.body;
+      if (target && typeof target.appendChild === "function") {
+        if (!document.getElementById?.("ytm-guard-style")) target.appendChild(guardStyle);
+      } else {
+        setTimeout(injectGuard, 50);
+      }
+    };
+    injectGuard();
+  }
+
   window.__ytmFeatures = api;
   api.configure(window.__ytmFeatureConfig || {});
 })();

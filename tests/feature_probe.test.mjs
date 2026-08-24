@@ -17,12 +17,19 @@ function createRuntime(initialTitle = "YouTube Music") {
       querySelector() {
         return null;
       },
+      createElement() {
+        return { id: "", textContent: "", appendChild() {} };
+      },
+      getElementById() {
+        return null;
+      },
       readyState: "complete",
       title: initialTitle,
     },
     setTimeout() {
       return ++timerId;
     },
+    addEventListener() {},
   };
   context.window = context;
   vm.runInNewContext(source, context);
