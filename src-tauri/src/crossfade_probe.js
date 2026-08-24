@@ -5,15 +5,54 @@
   let active = false;
   let boundMedia = null;
   let fadeTimer = null;
-  let baseVolume = 1;
+  let masterVolume = 1;
   let isFadingOut = false;
+  let isFadingIn = false;
+  let lastTrackUrl = "";
+  let trackChangeFired = false;
 
   const FADE_IN_DURATION = 1500;
   const FADE_OUT_DURATION = 3500;
-  const SECONDS_BEFORE_END = 4;
+  const SECONDS_BEFORE_END = 3.5;
+
+  function getPlayer() {
+    return document.querySelector("#movie_player");
+  }
+
+  function getTrueMasterVolume() {
+    const player = getPlayer();
+    if (typeof player?.getVolume === "function") {
+      const vol = player.getVolume();
+      if (typeof vol === "number" && !isNaN(vol) && vol > 0) {
+        return Math.max(0.05, Math.min(1, vol / 100));
+      }
+    }
+    return Math.max(0.05, Math.min(1, masterVolume));
+  }
+
+  function clearFadeTimer() {
+    if (fadeTimer) {
+      clearInterval(fadeTimer);
+      fadeTimer = null;
+    }
+  }
+
+  function restoreVolume() {
+    clearFadeTimer();
+    isFadingOut = false;
+    isFadingIn = false;
+    if (boundMedia) {
+      masterVolume = getTrueMasterVolume();
+      boundMedia.volume = masterVolume;
+    }
+  }
 
   function onTimeUpdate() {
     if (!active || !boundMedia || boundMedia.paused || boundMedia.seeking) return;
+
+    if (!isFadingOut && !isFadingIn) {
+      masterVolume = getTrueMasterVolume();
+    }
 
     const current = boundMedia.currentTime;
     const duration = boundMedia.duration;
@@ -25,18 +64,20 @@
     if (remaining <= SECONDS_BEFORE_END && !isFadingOut) {
       isFadingOut = true;
       fadeOut();
+    } else if (remaining > SECONDS_BEFORE_END && isFadingOut) {
+      restoreVolume();
     }
   }
 
   function fadeOut() {
     if (!boundMedia) return;
+    clearFadeTimer();
     const startVol = boundMedia.volume;
     const startTime = Date.now();
 
-    if (fadeTimer) clearInterval(fadeTimer);
     fadeTimer = setInterval(() => {
-      if (!boundMedia || boundMedia.paused || boundMedia.seeking) {
-        clearInterval(fadeTimer);
+      if (!boundMedia || boundMedia.paused || boundMedia.seeking || !active) {
+        clearFadeTimer();
         return;
       }
       const elapsed = Date.now() - startTime;
@@ -44,22 +85,25 @@
       boundMedia.volume = Math.max(0, startVol * (1 - progress));
 
       if (progress >= 1) {
-        clearInterval(fadeTimer);
-        fadeTimer = null;
+        clearFadeTimer();
       }
     }, 50);
   }
 
   function fadeIn() {
-    if (!boundMedia) return;
-    const targetVol = baseVolume;
+    if (!boundMedia || !active) return;
+    clearFadeTimer();
+    isFadingIn = true;
+    isFadingOut = false;
+    masterVolume = getTrueMasterVolume();
+    const targetVol = masterVolume;
     boundMedia.volume = 0;
     const startTime = Date.now();
 
-    if (fadeTimer) clearInterval(fadeTimer);
     fadeTimer = setInterval(() => {
-      if (!boundMedia || boundMedia.paused || boundMedia.seeking) {
-        clearInterval(fadeTimer);
+      if (!boundMedia || boundMedia.paused || boundMedia.seeking || !active) {
+        clearFadeTimer();
+        isFadingIn = false;
         return;
       }
       const elapsed = Date.now() - startTime;
@@ -68,18 +112,35 @@
 
       if (progress >= 1) {
         boundMedia.volume = targetVol;
-        clearInterval(fadeTimer);
-        fadeTimer = null;
+        isFadingIn = false;
+        clearFadeTimer();
       }
     }, 50);
   }
 
-  function onTrackStart() {
-    isFadingOut = false;
-    if (boundMedia) {
-      baseVolume = boundMedia.volume || 1;
+  function onTrackChange(detail) {
+    if (!active) return;
+    const currentUrl = detail?.url || location.href;
+    if (currentUrl !== lastTrackUrl) {
+      lastTrackUrl = currentUrl;
+      trackChangeFired = true;
       fadeIn();
     }
+  }
+
+  function onPlay() {
+    if (!active || !boundMedia) return;
+    if (boundMedia.currentTime < 2 && (trackChangeFired || isFadingOut)) {
+      trackChangeFired = false;
+      fadeIn();
+    } else if (!isFadingIn && !isFadingOut) {
+      masterVolume = getTrueMasterVolume();
+      boundMedia.volume = masterVolume;
+    }
+  }
+
+  function onSeeking() {
+    restoreVolume();
   }
 
   function attachMedia() {
@@ -87,31 +148,49 @@
     if (media && media !== boundMedia) {
       if (boundMedia) {
         boundMedia.removeEventListener("timeupdate", onTimeUpdate);
-        boundMedia.removeEventListener("play", onTrackStart);
+        boundMedia.removeEventListener("play", onPlay);
+        boundMedia.removeEventListener("seeking", onSeeking);
       }
       boundMedia = media;
-      baseVolume = media.volume;
+      masterVolume = getTrueMasterVolume();
       boundMedia.addEventListener("timeupdate", onTimeUpdate);
-      boundMedia.addEventListener("play", onTrackStart);
+      boundMedia.addEventListener("play", onPlay);
+      boundMedia.addEventListener("seeking", onSeeking);
     }
   }
 
+  let pollTimer = null;
+  let trackChangeListener = null;
+
   function start() {
     active = true;
+    masterVolume = getTrueMasterVolume();
     attachMedia();
-    setInterval(attachMedia, 1500);
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(attachMedia, 1500);
+
+    trackChangeListener = (e) => onTrackChange(e.detail);
+    window.addEventListener("ytm-track-change", trackChangeListener);
   }
 
   function stop() {
     active = false;
-    if (fadeTimer) clearInterval(fadeTimer);
-    fadeTimer = null;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+    clearFadeTimer();
+    if (trackChangeListener) {
+      window.removeEventListener("ytm-track-change", trackChangeListener);
+      trackChangeListener = null;
+    }
     if (boundMedia) {
       boundMedia.removeEventListener("timeupdate", onTimeUpdate);
-      boundMedia.removeEventListener("play", onTrackStart);
-      boundMedia.volume = baseVolume;
+      boundMedia.removeEventListener("play", onPlay);
+      boundMedia.removeEventListener("seeking", onSeeking);
+      boundMedia.volume = getTrueMasterVolume();
       boundMedia = null;
     }
+    isFadingOut = false;
+    isFadingIn = false;
   }
 
   runtime.register("crossfade", { start, stop });
