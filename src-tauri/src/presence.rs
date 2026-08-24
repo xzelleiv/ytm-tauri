@@ -11,16 +11,17 @@ use std::{
     fs,
     path::PathBuf,
     sync::{
-        mpsc::{self, Sender},
+        mpsc::{self, RecvTimeoutError, Sender},
         Arc, Mutex,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const TITLE_PREFIX: &str = "YTMRPC:";
 const CLIENT_ID_ENV: &str = "YT_MUSIC_DISCORD_CLIENT_ID";
 const BUNDLED_CLIENT_ID: &str = include_str!("../discord-client-id.txt");
+const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Clone)]
 pub struct PresenceController {
@@ -38,6 +39,7 @@ struct PresenceStatus {
 
 struct PresenceState {
     enabled: bool,
+    spotify_spoof: bool,
     client_id: Option<String>,
     client: Option<DiscordIpcClient>,
     current_track: Option<TrackMetadata>,
@@ -47,10 +49,11 @@ struct PresenceState {
 enum PresenceCommand {
     Message(PresenceMessage),
     SetEnabled(bool),
+    SetSpotifySpoof(bool),
 }
 
 impl PresenceController {
-    pub fn new(enabled: bool) -> Self {
+    pub fn new(enabled: bool, spotify_spoof: bool) -> Self {
         let (tx, rx) = mpsc::channel::<PresenceCommand>();
         let status = Arc::new(Mutex::new(PresenceStatus {
             enabled,
@@ -62,16 +65,24 @@ impl PresenceController {
             let client_id = read_client_id();
             let mut state = PresenceState {
                 enabled,
+                spotify_spoof,
                 client_id,
                 client: None,
                 current_track: None,
                 published_track: None,
             };
-            sync_status(&state, &status_for_worker);
+            if state.enabled {
+                connect_presence_state(&mut state);
+            }
 
-            for command in rx {
-                update_presence_state(&mut state, command);
+            loop {
                 sync_status(&state, &status_for_worker);
+
+                match rx.recv_timeout(RECONNECT_INTERVAL) {
+                    Ok(command) => update_presence_state(&mut state, command),
+                    Err(RecvTimeoutError::Timeout) => retry_presence_connection(&mut state),
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
             }
         });
 
@@ -96,6 +107,12 @@ impl PresenceController {
 
     pub fn set_enabled(&self, enabled: bool) {
         let _ = self.tx.send(PresenceCommand::SetEnabled(enabled));
+    }
+
+    pub fn set_spotify_spoof(&self, spotify_spoof: bool) {
+        let _ = self
+            .tx
+            .send(PresenceCommand::SetSpotifySpoof(spotify_spoof));
     }
 
     pub fn status(&self) -> String {
@@ -147,9 +164,24 @@ fn update_presence_state(state: &mut PresenceState, command: PresenceCommand) {
             if enabled {
                 if let Some(track) = state.current_track.clone() {
                     update_track_presence_state(state, track);
+                } else {
+                    connect_presence_state(state);
                 }
             } else {
                 clear_presence_state(state);
+            }
+        }
+        PresenceCommand::SetSpotifySpoof(spoof) => {
+            if state.spotify_spoof == spoof {
+                return;
+            }
+
+            state.spotify_spoof = spoof;
+            state.published_track = None;
+            if state.enabled {
+                if let Some(track) = state.current_track.clone() {
+                    update_track_presence_state(state, track);
+                }
             }
         }
     }
@@ -160,22 +192,22 @@ fn update_track_presence_state(state: &mut PresenceState, track: TrackMetadata) 
         return;
     }
 
-    let Some(client_id) = state.client_id.clone() else {
+    if state.client_id.is_none() {
         state.published_track = Some(track);
         return;
-    };
+    }
 
-    if state.client.is_none() {
-        let mut client = DiscordIpcClient::new(client_id);
-        if client.connect().is_err() {
-            return;
-        }
-        state.client = Some(client);
+    if !connect_presence_state(state) {
+        return;
     }
 
     let mut activity = Activity::new()
         .activity_type(ActivityType::Listening)
-        .name("YouTube Music")
+        .name(if state.spotify_spoof {
+            "Spotify"
+        } else {
+            "YouTube Music"
+        })
         .details(track.title.clone());
 
     if let Some(presence_state) = track.presence_state() {
@@ -184,10 +216,10 @@ fn update_track_presence_state(state: &mut PresenceState, track: TrackMetadata) 
             .status_display_type(StatusDisplayType::State);
     }
 
-    let activity = apply_activity_urls(activity, &track);
-    let activity = apply_activity_assets(activity, &track);
+    let activity = apply_activity_urls(activity, &track, state.spotify_spoof);
+    let activity = apply_activity_assets(activity, &track, state.spotify_spoof);
     let activity = apply_activity_timestamps(activity, &track);
-    let activity = apply_activity_buttons(activity, &track);
+    let activity = apply_activity_buttons(activity, &track, state.spotify_spoof);
 
     let result = state
         .client
@@ -199,6 +231,36 @@ fn update_track_presence_state(state: &mut PresenceState, track: TrackMetadata) 
         state.published_track = None;
     } else {
         state.published_track = Some(track);
+    }
+}
+
+fn connect_presence_state(state: &mut PresenceState) -> bool {
+    if state.client.is_some() {
+        return true;
+    }
+
+    let Some(client_id) = state.client_id.clone() else {
+        return false;
+    };
+
+    let mut client = DiscordIpcClient::new(client_id);
+    if client.connect().is_err() {
+        return false;
+    }
+
+    state.client = Some(client);
+    true
+}
+
+fn retry_presence_connection(state: &mut PresenceState) {
+    if !state.enabled || state.client.is_some() || state.client_id.is_none() {
+        return;
+    }
+
+    if let Some(track) = state.current_track.clone() {
+        update_track_presence_state(state, track);
+    } else {
+        connect_presence_state(state);
     }
 }
 
@@ -339,7 +401,15 @@ fn normalize_client_id(value: impl AsRef<str>) -> String {
         .collect()
 }
 
-fn apply_activity_urls<'a>(activity: Activity<'a>, track: &'a TrackMetadata) -> Activity<'a> {
+fn apply_activity_urls<'a>(
+    activity: Activity<'a>,
+    track: &'a TrackMetadata,
+    spotify_spoof: bool,
+) -> Activity<'a> {
+    if spotify_spoof {
+        return activity;
+    }
+
     let Some(url) = valid_track_url(track.url.as_deref()) else {
         return activity;
     };
@@ -347,17 +417,27 @@ fn apply_activity_urls<'a>(activity: Activity<'a>, track: &'a TrackMetadata) -> 
     activity.details_url(url).state_url(url)
 }
 
-fn apply_activity_assets<'a>(activity: Activity<'a>, track: &'a TrackMetadata) -> Activity<'a> {
-    let Some(cover_url) = valid_artwork_url(track.cover_url.as_deref()) else {
-        return activity;
-    };
+fn apply_activity_assets<'a>(
+    activity: Activity<'a>,
+    track: &'a TrackMetadata,
+    spotify_spoof: bool,
+) -> Activity<'a> {
+    let mut assets = Assets::new();
 
-    let mut assets = Assets::new()
-        .large_image(cover_url)
-        .large_text(track.asset_text());
+    if let Some(cover_url) = valid_artwork_url(track.cover_url.as_deref()) {
+        assets = assets
+            .large_image(cover_url)
+            .large_text(track.asset_text());
 
-    if let Some(track_url) = valid_track_url(track.url.as_deref()) {
-        assets = assets.large_url(track_url);
+        if !spotify_spoof {
+            if let Some(track_url) = valid_track_url(track.url.as_deref()) {
+                assets = assets.large_url(track_url);
+            }
+        }
+    }
+
+    if spotify_spoof {
+        assets = assets.small_image("spotify").small_text("Spotify");
     }
 
     activity.assets(assets)
@@ -389,12 +469,21 @@ fn apply_activity_timestamps<'a>(activity: Activity<'a>, track: &TrackMetadata) 
     activity.timestamps(Timestamps::new().start(start).end(end))
 }
 
-fn apply_activity_buttons<'a>(activity: Activity<'a>, track: &'a TrackMetadata) -> Activity<'a> {
-    let Some(url) = valid_track_url(track.url.as_deref()) else {
-        return activity;
-    };
-
-    activity.buttons(vec![Button::new("Listen on YouTube Music", url)])
+fn apply_activity_buttons<'a>(
+    activity: Activity<'a>,
+    track: &'a TrackMetadata,
+    spotify_spoof: bool,
+) -> Activity<'a> {
+    if spotify_spoof {
+        activity.buttons(vec![Button::new(
+            "Play on Spotify",
+            "https://github.com/xzelleiv/ytm-tauri",
+        )])
+    } else if let Some(url) = valid_track_url(track.url.as_deref()) {
+        activity.buttons(vec![Button::new("Listen on YouTube Music", url)])
+    } else {
+        activity
+    }
 }
 
 fn clean_presence_part(value: Option<&str>) -> Option<&str> {
@@ -538,6 +627,7 @@ mod tests {
     fn disabled_presence_caches_track_and_restores_it_when_enabled() {
         let mut state = PresenceState {
             enabled: true,
+            spotify_spoof: false,
             client_id: None,
             client: None,
             current_track: None,
@@ -570,7 +660,7 @@ mod tests {
 
     #[test]
     fn disabled_status_is_reported() {
-        let controller = PresenceController::new(false);
+        let controller = PresenceController::new(false, false);
 
         assert_eq!(controller.status(), "Disabled");
     }

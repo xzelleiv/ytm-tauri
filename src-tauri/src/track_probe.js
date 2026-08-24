@@ -1,4 +1,7 @@
 (() => {
+  if (typeof location === "object" && location.hostname && location.hostname !== "music.youtube.com") {
+    return;
+  }
   if (window.__ytMusicTauriProbeInstalled) {
     return;
   }
@@ -286,7 +289,10 @@
     }
 
     lastPayload = CLEAR_PAYLOAD;
-    lastPresenceKey = "";
+    if (lastPresenceKey !== "") {
+      lastPresenceKey = "";
+      window.dispatchEvent(new CustomEvent("ytm-track-change", { detail: null }));
+    }
     lastProgressPublish = 0;
     document.title = CLEAR_PAYLOAD;
   };
@@ -317,6 +323,11 @@
       now - lastProgressPublish < PROGRESS_REFRESH_MS
     ) {
       return;
+    }
+
+    const isNewTrack = key !== lastPresenceKey;
+    if (isNewTrack) {
+      window.dispatchEvent(new CustomEvent("ytm-track-change", { detail: track }));
     }
 
     if (payload !== lastPayload) {
