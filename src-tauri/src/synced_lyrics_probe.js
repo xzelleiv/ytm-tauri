@@ -429,7 +429,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 }
 
 .line-seek-pulse {
-  animation: line-seek-flash 0.4s ease-out !important;
+  animation: line-seek-flash 0.45s ease-out !important;
 }
 
 @keyframes line-seek-flash {
@@ -443,9 +443,36 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 }
 
+.synced-line {
+  position: relative;
+}
+.synced-line:hover .text-lyrics {
+  opacity: 0.85;
+}
+.synced-line .seek-hint-icon {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.8);
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  color: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+.synced-line:hover .seek-hint-icon {
+  opacity: 0.8;
+  transform: translateY(-50%) scale(1);
+}
+.synced-line.current .seek-hint-icon {
+  display: none !important;
+}
+
 .synced-line.instrumental .text-lyrics {
-  opacity: 0.5;
-  letter-spacing: 0.2em;
+  opacity: 0.45;
+  letter-spacing: 0.15em;
+  font-size: calc(var(--lyrics-font-size) * 0.85) !important;
 }
 
 .synced-line.instrumental.current .text-lyrics {
@@ -455,7 +482,50 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
 @keyframes pulse-note {
   0%, 100% { transform: scale(1); filter: brightness(1); }
-  50% { transform: scale(1.15); filter: brightness(1.4) drop-shadow(0 0 10px var(--glow-color, rgba(255,255,255,0.7))); }
+  50% { transform: scale(1.1); filter: brightness(1.3) drop-shadow(0 0 10px var(--glow-color, rgba(255,255,255,0.7))); }
+}
+
+.lyrics-sync-btn {
+  position: absolute;
+  bottom: 24px;
+  right: 28px;
+  background: rgba(24, 24, 24, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 24px;
+  padding: 7px 16px 7px 12px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  z-index: 105;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.95);
+  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease;
+  font-family: inherit;
+}
+.lyrics-sync-btn.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+.lyrics-sync-btn:hover {
+  background: rgba(45, 45, 45, 0.98);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.lyrics-sync-btn:active {
+  transform: scale(0.96);
+}
+.lyrics-sync-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 `;
 
@@ -493,38 +563,14 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     );
   }
 
-  function cleanSongTitle(title) {
-    if (!title) return "";
-    return title
-      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
-      .replace(/\s*-\s*(official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft|special edition|deluxe).*$/gi, " ")
-      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function cleanArtist(artist) {
-    if (!artist) return "";
-    return artist
-      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
-      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
   const suffixesToRemove = [
     // artist names
     /\s*(- topic)$/i,
     /\s*vevo$/i,
     // video titles
-    /\s*[(|[]official(.*?)[)|\]]/i,
-    /\s*[(|[]((lyrics?|visualizer|audio)\s*(video)?)[)|\]]/i,
-    /\s*[(|[](performance video)[)|\]]/i,
-    /\s*[(|[](clip official)[)|\]]/i,
-    /\s*[(|[](video version)[)|\]]/i,
-    /\s*[(|[](HD|HQ)\s*?(?:audio)?[)|\]]$/i,
-    /\s*[(|[](live)[)|\]]$/i,
-    /\s*[(|[]4K\s*?(?:upgrade)?[)|\]]$/i,
+    /\s*[(|[](official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft|special edition|deluxe|explicit|clean|4k|hd|hq|performance|clip|full album|slowed|reverb|sped up|sped-up|slowed\s*\+\s*reverb|color coded|eng sub|rom|han|eng|lyrics video).*?[)|\]]/gi,
+    /\s*[(|[](20\d\d|19\d\d)\s*(remaster|version|edition|mix|anniversary)?[)|\]]/gi,
+    /\s*[(|[](hd|hq|4k|upgrade|live|acoustic|instrumental)[)|\]]$/gi,
   ];
 
   function cleanupName(name) {
@@ -534,6 +580,162 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       str = str.replace(suffix, "");
     }
     return str.trim();
+  }
+
+  function cleanSongTitle(title) {
+    if (!title) return "";
+    let str = String(title)
+      .replace(/^\d+[\s.-]+\s*/, "")
+      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
+      .replace(/\s*-\s*(official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft|special edition|deluxe).*$/gi, " ")
+      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return cleanupName(str);
+  }
+
+  function cleanArtist(artist) {
+    if (!artist) return "";
+    let str = String(artist)
+      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
+      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return cleanupName(str);
+  }
+
+  const KANA_MAP = {
+    "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
+    "か": "ka", "き": "ki", "く": "ku", "け": "ke", "こ": "ko",
+    "さ": "sa", "し": "shi", "す": "su", "せ": "se", "そ": "so",
+    "た": "ta", "ち": "chi", "つ": "tsu", "て": "te", "と": "to",
+    "な": "na", "に": "ni", "ぬ": "nu", "ね": "ne", "の": "no",
+    "は": "ha", "ひ": "hi", "ふ": "fu", "へ": "he", "ほ": "ho",
+    "ま": "ma", "み": "mi", "む": "mu", "め": "me", "も": "mo",
+    "や": "ya", "ゆ": "yu", "よ": "yo",
+    "ら": "ra", "り": "ri", "る": "ru", "れ": "re", "ろ": "ro",
+    "わ": "wa", "を": "wo", "ん": "n",
+    "が": "ga", "ぎ": "gi", "ぐ": "gu", "げ": "ge", "ご": "go",
+    "ざ": "za", "じ": "ji", "ず": "zu", "ぜ": "ze", "ぞ": "zo",
+    "だ": "da", "ぢ": "ji", "づ": "zu", "デ": "de", "ど": "do",
+    "ば": "ba", "び": "bi", "ぶ": "bu", "べ": "be", "ぼ": "bo",
+    "ぱ": "pa", "ぴ": "pi", "ぷ": "pu", "ぺ": "pe", "ぽ": "po",
+    "きゃ": "kya", "きゅ": "kyu", "きょ": "kyo",
+    "しゃ": "sha", "しゅ": "shu", "しょ": "sho",
+    "ちゃ": "cha", "ちゅ": "chu", "ちょ": "cho",
+    "にゃ": "nya", "にゅ": "nyu", "にょ": "nyo",
+    "ひゃ": "hya", "ひゅ": "hyu", "ひょ": "hyo",
+    "みゃ": "mya", "みゅ": "myu", "みょ": "myo",
+    "りゃ": "rya", "りゅ": "ryu", "りょ": "ryo",
+    "ぎゃ": "gya", "ぎゅ": "gyu", "ぎょ": "gyo",
+    "じゃ": "ja", "じゅ": "ju", "ジョ": "jo",
+    "びゃ": "bya", "びゅ": "byu", "びょ": "byo",
+    "ぴゃ": "pya", "ぴゅ": "pyu", "ぴょ": "pyo",
+    "ア": "a", "イ": "i", "ウ": "u", "エ": "e", "オ": "o",
+    "カ": "ka", "キ": "ki", "ク": "ku", "ケ": "ke", "コ": "ko",
+    "サ": "sa", "シ": "shi", "ス": "su", "セ": "se", "ソ": "so",
+    "タ": "ta", "チ": "chi", "ツ": "tsu", "テ": "te", "ト": "to",
+    "ナ": "na", "ニ": "ni", "ヌ": "nu", "ネ": "ne", "ノ": "no",
+    "ハ": "ha", "ヒ": "hi", "フ": "fu", "ヘ": "he", "ホ": "ho",
+    "マ": "ma", "ミ": "mi", "ム": "mu", "メ": "me", "モ": "mo",
+    "ヤ": "ya", "ユ": "yu", "ヨ": "yo",
+    "ラ": "ra", "リ": "ri", "ル": "ru", "レ": "re", "ロ": "ro",
+    "ワ": "wa", "ヲ": "wo", "ン": "n",
+    "ガ": "ga", "ギ": "gi", "グ": "gu", "ゲ": "ge", "ゴ": "go",
+    "ザ": "za", "ジ": "ji", "ズ": "zu", "ゼ": "ze", "ゾ": "zo",
+    "ダ": "da", "ヂ": "ji", "ヅ": "zu", "デ": "de", "ド": "do",
+    "バ": "ba", "ビ": "bi", "ブ": "bu", "ベ": "be", "ボ": "bo",
+    "パ": "pa", "ピ": "pi", "プ": "pu", "ペ": "pe", "ポ": "po",
+    "キャ": "kya", "キュ": "kyu", "キョ": "kyo",
+    "シャ": "sha", "シュ": "shu", "ショ": "sho",
+    "チャ": "cha", "チュ": "chu", "チョ": "cho",
+    "ニャ": "nya", "ニュ": "nyu", "ニョ": "nyo",
+    "ヒャ": "hya", "ヒュ": "hyu", "ヒョ": "hyo",
+    "ミャ": "mya", "ミュ": "myu", "ミョ": "myo",
+    "リャ": "rya", "リュ": "ryu", "リョ": "ryo",
+    "ギャ": "gya", "ギュ": "gyu", "ギョ": "gyo",
+    "ジャ": "ja", "ジュ": "ju", "ジョ": "jo",
+    "ビャ": "bya", "ビュ": "byu", "ビョ": "byo",
+    "ピャ": "pya", "ピュ": "pyu", "ピョ": "pyo",
+    "ー": "-",
+  };
+
+  const HANGUL_INITS = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"];
+  const HANGUL_MEDS = ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"];
+  const HANGUL_FINS = ["", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lg", "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "s", "ss", "ng", "j", "ch", "k", "t", "p", "h"];
+
+  function romanizeText(text) {
+    if (!text) return "";
+    let out = "";
+    let i = 0;
+    while (i < text.length) {
+      const code = text.charCodeAt(i);
+      if (code >= 0xac00 && code <= 0xd7a3) {
+        const syl = code - 0xac00;
+        const init = Math.floor(syl / 588);
+        const med = Math.floor((syl % 588) / 28);
+        const fin = syl % 28;
+        out += HANGUL_INITS[init] + HANGUL_MEDS[med] + HANGUL_FINS[fin];
+        i++;
+        continue;
+      }
+      if (i + 1 < text.length) {
+        const pair = text.slice(i, i + 2);
+        if (KANA_MAP[pair]) {
+          out += KANA_MAP[pair];
+          i += 2;
+          continue;
+        }
+      }
+      const char = text[i];
+      if ((char === "っ" || char === "ッ") && i + 1 < text.length) {
+        const nextPair = text.slice(i + 1, i + 3);
+        const nextSingle = text[i + 1];
+        const nextRom = KANA_MAP[nextPair] || KANA_MAP[nextSingle];
+        if (nextRom) {
+          out += nextRom[0];
+          i++;
+          continue;
+        }
+      }
+      out += KANA_MAP[char] || char;
+      i++;
+    }
+    return out !== text ? out : "";
+  }
+
+  function insertInstrumentalBreaks(lines) {
+    if (!lines || !lines.length) return lines || [];
+    const result = [];
+    if (lines[0].timeInMs > 7500) {
+      result.push({
+        time: "00:00.00",
+        timeInMs: 0,
+        duration: lines[0].timeInMs,
+        text: "♪ Instrumental ♪",
+        isInstrumental: true,
+        words: [],
+      });
+    }
+    for (let i = 0; i < lines.length; i++) {
+      result.push(lines[i]);
+      if (i < lines.length - 1) {
+        const lineDur = lines[i].duration < 60000 ? lines[i].duration : 3000;
+        const gap = lines[i + 1].timeInMs - (lines[i].timeInMs + lineDur);
+        if (gap > 9500) {
+          const startTime = lines[i].timeInMs + lineDur;
+          result.push({
+            time: formatTime(startTime),
+            timeInMs: startTime,
+            duration: gap,
+            text: "♪ Instrumental ♪",
+            isInstrumental: true,
+            words: [],
+          });
+        }
+      }
+    }
+    return result;
   }
 
   function getPlayer() {
@@ -1196,6 +1398,8 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   let isProgrammaticScroll = false;
   let programmaticScrollTimer = null;
 
+  let isInitialTrackScroll = true;
+
   function scrollToLineIndex(index, behavior = "smooth") {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
@@ -1207,10 +1411,12 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
         const top = target.offsetTop - vlist.clientHeight * 0.38;
         isProgrammaticScroll = true;
         if (programmaticScrollTimer) window.clearTimeout(programmaticScrollTimer);
-        vlist.scrollTo({ top: Math.max(0, top), behavior });
+        const actualBehavior = isInitialTrackScroll ? "instant" : behavior;
+        isInitialTrackScroll = false;
+        vlist.scrollTo({ top: Math.max(0, top), behavior: actualBehavior });
         programmaticScrollTimer = window.setTimeout(() => {
           isProgrammaticScroll = false;
-        }, 500);
+        }, 400);
       }
     }
   }
@@ -1229,13 +1435,23 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     scrollToLineIndex(currentIndex);
   }
 
+  function updateSyncButtonVisibility() {
+    const container = document.getElementById(CONTAINER_ID);
+    const syncBtn = container?.querySelector(".lyrics-sync-btn");
+    if (syncBtn) {
+      syncBtn.classList.toggle("visible", isUserScrolling);
+    }
+  }
+
   function onUserScroll() {
     if (isProgrammaticScroll) return;
     isUserScrolling = true;
+    updateSyncButtonVisibility();
     if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
     if (config().lyrics_auto_sync !== false) {
       userScrollTimeout = window.setTimeout(() => {
         isUserScrolling = false;
+        updateSyncButtonVisibility();
         scrollToActiveLine();
       }, 3000);
     }
@@ -1307,6 +1523,21 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     container.addEventListener("mouseleave", () => {
       updatePickerVisibility(false);
     }, { passive: true });
+
+    const syncBtn = document.createElement("button");
+    syncBtn.type = "button";
+    syncBtn.className = `lyrics-sync-btn${isUserScrolling ? " visible" : ""}`;
+    syncBtn.innerHTML = `
+      <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+      <span>Sync</span>
+    `;
+    syncBtn.addEventListener("click", () => {
+      isUserScrolling = false;
+      if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
+      syncBtn.classList.remove("visible");
+      scrollToActiveLine();
+    });
+    container.appendChild(syncBtn);
 
     if (!current || current.state === "fetching") {
       renderLoadingKaomoji(vlist);
@@ -1442,18 +1673,26 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     });
   }
 
-  function renderSynced(target, lines) {
+  function renderSynced(target, rawLines) {
+    const lines = insertInstrumentalBreaks(rawLines);
     lines.forEach((line, index) => {
       const lineEl = document.createElement("div");
       const rawText = clean(line.text);
-      const isInstrumental = !rawText || rawText === "♪" || rawText === "..." || rawText === "•••";
+      const isInstrumental = Boolean(line.isInstrumental || !rawText || rawText === "♪" || rawText === "..." || rawText === "•••");
       lineEl.className = `synced-line${isInstrumental ? " instrumental" : ""}`;
       lineEl.dataset.index = String(index);
+
+      if (!isInstrumental) {
+        const seekHint = document.createElement("span");
+        seekHint.className = "seek-hint-icon";
+        seekHint.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+        lineEl.appendChild(seekHint);
+      }
 
       const text = document.createElement("div");
       text.className = "text-lyrics";
       text.style.setProperty("--lyrics-duration", `${Math.max(line.duration, 1000) / 1000}s`, "important");
-      text.addEventListener("click", () => seekToLine(line.timeInMs));
+      text.addEventListener("click", () => seekToLine(line.timeInMs, lineEl));
 
       if (config().lyrics_show_timecodes && line.time) {
         const time = document.createElement("span");
@@ -1463,7 +1702,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       }
 
       const wordsWrap = document.createElement("span");
-      const words = (isInstrumental ? "♪" : (line.text || "♪")).split(" ");
+      const words = (isInstrumental ? "♪ Instrumental ♪" : (line.text || "♪")).split(" ");
       words.forEach((word, wIdx) => {
         const span = document.createElement("span");
         span.style.transitionDelay = `${wIdx * 0.05}s`;
@@ -1475,17 +1714,20 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
       const isNonLatin = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff\uac00-\ud7af]/.test(line.text);
       if (config().lyrics_romanization && line.text && isNonLatin && !isInstrumental) {
-        const romaji = document.createElement("span");
-        romaji.className = "romaji";
-        const rWords = line.text.split(" ");
-        rWords.forEach((word, wIdx) => {
-          const span = document.createElement("span");
-          span.style.transitionDelay = `${wIdx * 0.05}s`;
-          span.style.animationDelay = `${wIdx * 0.05}s`;
-          span.textContent = `${word} `;
-          romaji.appendChild(span);
-        });
-        text.appendChild(romaji);
+        const romanized = romanizeText(line.text);
+        if (romanized) {
+          const romaji = document.createElement("span");
+          romaji.className = "romaji";
+          const rWords = romanized.split(" ");
+          rWords.forEach((word, wIdx) => {
+            const span = document.createElement("span");
+            span.style.transitionDelay = `${wIdx * 0.05}s`;
+            span.style.animationDelay = `${wIdx * 0.05}s`;
+            span.textContent = `${word} `;
+            romaji.appendChild(span);
+          });
+          text.appendChild(romaji);
+        }
       }
 
       lineEl.appendChild(text);
@@ -1494,12 +1736,19 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     updateCurrentLine();
   }
 
-  function seekToLine(timeInMs) {
+  function seekToLine(timeInMs, lineEl) {
+    if (lineEl) {
+      lineEl.classList.remove("line-seek-pulse");
+      void lineEl.offsetWidth;
+      lineEl.classList.add("line-seek-pulse");
+      setTimeout(() => lineEl?.classList.remove("line-seek-pulse"), 450);
+    }
     isUserScrolling = false;
     if (userScrollTimeout) {
       window.clearTimeout(userScrollTimeout);
       userScrollTimeout = null;
     }
+    updateSyncButtonVisibility();
     const player = getPlayer();
     if (typeof player?.seekTo === "function") {
       player.seekTo((timeInMs + 10) / 1000);
@@ -1545,6 +1794,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   function invalidateActiveTrack() {
     currentTrackEpoch++;
     isUserScrolling = false;
+    isInitialTrackScroll = true;
     if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
     activeTrack = null;
     manuallySwitched = false;
@@ -1570,6 +1820,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       currentTrackEpoch++;
       const epoch = currentTrackEpoch;
       isUserScrolling = false;
+      isInitialTrackScroll = true;
       if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
       activeTrack = info;
       manuallySwitched = false;

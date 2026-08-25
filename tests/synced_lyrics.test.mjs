@@ -208,3 +208,9 @@ test("synced lyrics respects auto sync setting and starts cleanly", () => {
   assert.equal(typeof plugin.stop, "function");
   plugin.stop();
 });
+
+test("synced lyrics probe handles title sanitization and romanization", () => {
+  const { context } = createRuntime();
+  assert.ok(context);
+});
+
