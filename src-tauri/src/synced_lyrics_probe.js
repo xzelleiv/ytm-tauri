@@ -1013,7 +1013,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   async function directFetchJson(url) {
-    const headers = { "Lrclib-Client": "ytm-tauri/0.2.2 (https://github.com/xzelleiv/ytm-tauri)" };
+    const headers = { "Lrclib-Client": "ytm-tauri/0.2.3 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
       const res = await window.fetch(url, { headers });
       if (res.ok) {
