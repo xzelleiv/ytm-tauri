@@ -425,9 +425,7 @@ fn apply_activity_assets<'a>(
     let mut assets = Assets::new();
 
     if let Some(cover_url) = valid_artwork_url(track.cover_url.as_deref()) {
-        assets = assets
-            .large_image(cover_url)
-            .large_text(track.asset_text());
+        assets = assets.large_image(cover_url).large_text(track.asset_text());
 
         if !spotify_spoof {
             if let Some(track_url) = valid_track_url(track.url.as_deref()) {

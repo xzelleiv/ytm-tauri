@@ -279,8 +279,13 @@
       duration_seconds: track.duration_seconds,
     });
 
+  const isCustomTitle = () =>
+    document.title.startsWith("YTMFEATURE:") ||
+    document.title.startsWith("YTMSPOTIFY:") ||
+    document.title.startsWith("YTMTRANSFER:");
+
   const publishClear = () => {
-    if (document.title.startsWith("YTMFEATURE:")) {
+    if (isCustomTitle()) {
       window.setTimeout(publishClear, 80);
       return;
     }
@@ -298,7 +303,7 @@
   };
 
   const publish = () => {
-    if (document.title.startsWith("YTMFEATURE:")) {
+    if (isCustomTitle()) {
       window.setTimeout(publish, 80);
       return;
     }

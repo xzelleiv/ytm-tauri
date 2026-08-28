@@ -8,6 +8,9 @@ mod platform;
 mod presence;
 mod scrobble;
 mod settings;
+mod spotify;
+mod spotify_bridge;
+mod transfer;
 mod updates;
 mod url_policy;
 mod windows_media;
@@ -44,6 +47,8 @@ const VIDEO_TOGGLE_SCRIPT: &str = include_str!("video_toggle_probe.js");
 const AMBIENT_MODE_SCRIPT: &str = include_str!("ambient_mode_probe.js");
 const CROSSFADE_SCRIPT: &str = include_str!("crossfade_probe.js");
 const SETTINGS_PROBE_SCRIPT: &str = include_str!("settings_probe.js");
+const YTM_TRANSFER_SCRIPT: &str = include_str!("ytm_transfer_probe.js");
+const SPOTIFY_TRANSFER_SCRIPT: &str = include_str!("spotify_transfer_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,14 +97,19 @@ pub fn run() {
     let notifications_for_window = notifications.clone();
     let notifications_for_events = notifications.clone();
     let adblock_for_webview = adblock.clone();
+    let spotify = spotify::SpotifyController::new();
+    let transfer = transfer::TransferController::new();
     let state = AppState {
         settings,
         presence,
         adblock,
+        spotify,
+        transfer,
         quitting: Arc::new(AtomicBool::new(false)),
     };
     let state_for_window_events = state.clone();
     let state_for_features = state.clone();
+    let state_for_spotify = state.clone();
     let start_minimized = std::env::args().any(|argument| argument == "--minimized");
 
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_notification::init());
@@ -114,7 +124,11 @@ pub fn run() {
     }
 
     builder
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["spotify_login", "spotify-session"])
+                .build(),
+        )
         .on_window_event(move |window, event| match event {
             WindowEvent::Focused(focused) if window.label() == "main" => {
                 controls::set_local_shortcuts(
@@ -124,13 +138,16 @@ pub fn run() {
                 );
             }
             WindowEvent::CloseRequested { api, .. }
-                if settings::snapshot(&state_for_window_events.settings).close_to_tray
+                if window.label() == "main"
+                    && settings::snapshot(&state_for_window_events.settings).close_to_tray
                     && !state_for_window_events.quitting.load(Ordering::Relaxed) =>
             {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
+            WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+                if window.label() == "main" =>
+            {
                 state_for_window_events.presence.clear();
                 scrobbler_for_events.clear();
                 notifications_for_events.clear();
@@ -188,6 +205,13 @@ pub fn run() {
                     if feature_bridge::is_feature_title_message(&title) {
                         if window.url().ok().as_ref().is_some_and(is_youtube_music_url) {
                             feature_bridge::handle_title(&window, &title, &state_for_features);
+                        }
+                        return;
+                    }
+
+                    if spotify_bridge::is_spotify_title_message(&title) {
+                        if window.url().ok().as_ref().is_some_and(is_youtube_music_url) {
+                            spotify_bridge::handle_title(&window, &title, &state_for_spotify);
                         }
                         return;
                     }
@@ -259,7 +283,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
         page_feature_config(settings)
     );
     let page_features = format!(
-        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{CROSSFADE_SCRIPT}\n{SETTINGS_PROBE_SCRIPT}"
+        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{CROSSFADE_SCRIPT}\n{SETTINGS_PROBE_SCRIPT}\n{YTM_TRANSFER_SCRIPT}\n{SPOTIFY_TRANSFER_SCRIPT}"
     );
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {

@@ -85,6 +85,8 @@ pub struct AppState {
     pub settings: SharedSettings,
     pub presence: PresenceController,
     pub adblock: AdBlockController,
+    pub spotify: crate::spotify::SpotifyController,
+    pub transfer: crate::transfer::TransferController,
     pub quitting: Arc<AtomicBool>,
 }
 

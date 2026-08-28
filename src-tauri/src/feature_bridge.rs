@@ -121,11 +121,23 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
 }
 
 fn send_response(window: &WebviewWindow, id: u64, response: &FeatureResponse) {
-    let Ok(payload) = serde_json::to_string(response) else {
+    let Ok(payload_json) = serde_json::to_string(response) else {
         return;
     };
-    let script = format!("window.__ytmFeatures?.receive?.({id}, {payload});");
-    let _ = window.eval(&script);
+    let Ok(escaped) = serde_json::to_string(&payload_json) else {
+        return;
+    };
+    let script = format!(
+        "try {{ window.__ytmFeatures?.receive?.({id}, JSON.parse({escaped})); }} catch (e) {{ console.error(e); }}"
+    );
+    let app = window.app_handle().clone();
+    let app_for_closure = app.clone();
+    let window_label = window.label().to_string();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app_for_closure.get_webview_window(&window_label) {
+            let _ = w.eval(&script);
+        }
+    });
 }
 
 fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) {
@@ -522,13 +534,21 @@ fn is_allowed_host(host: &str) -> bool {
             | "ytmbrowseproxy.zvz.be"
             | "b-ytmbrowseproxy.zvz.be"
             | "sponsor.ajay.app"
+            | "open.spotify.com"
+            | "api.spotify.com"
     )
 }
 
 fn is_allowed_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "accept" | "content-type" | "cookie" | "authority" | "lrclib-client" | "x-user-agent"
+        "accept"
+            | "content-type"
+            | "cookie"
+            | "authority"
+            | "lrclib-client"
+            | "x-user-agent"
+            | "user-agent"
     )
 }
 

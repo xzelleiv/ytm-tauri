@@ -18,7 +18,10 @@ const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
 #[cfg(windows)]
 pub fn open_url(url: &str) -> bool {
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://")
+        && !url.starts_with("http://127.0.0.1:")
+        && !url.starts_with("http://localhost:")
+    {
         return false;
     }
 

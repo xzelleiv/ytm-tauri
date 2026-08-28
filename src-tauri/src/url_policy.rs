@@ -241,6 +241,16 @@ pub fn is_youtube_music_url(url: &Url) -> bool {
     url.scheme() == "https" && url.host_str() == Some("music.youtube.com")
 }
 
+pub fn is_allowed_spotify_auth_url(url: &Url) -> bool {
+    match url.scheme() {
+        "about" => url.as_str() == "about:blank",
+        "https" => url
+            .host_str()
+            .is_some_and(|host| host_matches_domain(host, "spotify.com")),
+        _ => false,
+    }
+}
+
 pub fn valid_track_url(value: Option<&str>) -> Option<&str> {
     valid_discord_url(value, is_allowed_track_host)
 }
@@ -273,6 +283,9 @@ fn is_allowed_navigation_host(host: &str) -> bool {
         || host_matches_domain(host, "googleapis.com")
         || host_matches_domain(host, "gstatic.com")
         || host_matches_domain(host, "googleusercontent.com")
+        || host_matches_domain(host, "spotify.com")
+        || host_matches_domain(host, "scdn.co")
+        || host_matches_domain(host, "spotifycdn.com")
 }
 
 fn is_regional_google_accounts_host(host: &str) -> bool {
@@ -395,6 +408,27 @@ mod tests {
         )));
         assert!(!is_youtube_music_url(&parse_url(
             "https://music.youtube.com.example.com/"
+        )));
+    }
+
+    #[test]
+    fn spotify_auth_navigation_is_https_and_domain_scoped() {
+        assert!(is_allowed_spotify_auth_url(&parse_url("about:blank")));
+        assert!(is_allowed_spotify_auth_url(&parse_url(
+            "https://open.spotify.com/"
+        )));
+        assert!(is_allowed_spotify_auth_url(&parse_url(
+            "https://accounts.spotify.com/authorize"
+        )));
+
+        assert!(!is_allowed_spotify_auth_url(&parse_url(
+            "http://accounts.spotify.com/authorize"
+        )));
+        assert!(!is_allowed_spotify_auth_url(&parse_url(
+            "https://spotify.com.example.com/"
+        )));
+        assert!(!is_allowed_spotify_auth_url(&parse_url(
+            "https://example.com/?next=spotify.com"
         )));
     }
 
