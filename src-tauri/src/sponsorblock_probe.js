@@ -9,23 +9,52 @@
   let currentSegments = [];
   let boundMedia = null;
   let toastTimer = 0;
+  const segmentCache = new Map();
 
   async function fetchSegments(videoId) {
     if (!videoId) return [];
+    if (segmentCache.has(videoId)) {
+      return segmentCache.get(videoId);
+    }
+
     const url = `${API_URL}/api/skipSegments?videoID=${encodeURIComponent(videoId)}&categories=${encodeURIComponent(JSON.stringify(DEFAULT_CATEGORIES))}`;
     try {
-      const res = await window.fetch(url);
-      if (!res.ok) return [];
+      let res;
+      try {
+        res = await window.fetch(url);
+      } catch {
+        if (typeof runtime?.http === "function") {
+          const bridged = await runtime.http(url, { method: "GET" });
+          if (bridged && bridged.ok && bridged.body) {
+            res = { ok: true, json: async () => JSON.parse(bridged.body) };
+          }
+        }
+      }
+      if (!res || !res.ok) {
+        segmentCache.set(videoId, []);
+        return [];
+      }
       const data = await res.json();
-      if (!Array.isArray(data)) return [];
-      return data
+      if (!Array.isArray(data)) {
+        segmentCache.set(videoId, []);
+        return [];
+      }
+      const segments = data
         .map((item) => item.segment)
         .filter((seg) => Array.isArray(seg) && seg.length === 2 && Number.isFinite(seg[0]) && Number.isFinite(seg[1]))
         .sort((a, b) => a[0] - b[0]);
+
+      if (segmentCache.size >= 100) {
+        const oldest = segmentCache.keys().next().value;
+        segmentCache.delete(oldest);
+      }
+      segmentCache.set(videoId, segments);
+      return segments;
     } catch {
       return [];
     }
   }
+
 
   function showSkipToast(category) {
     let toast = document.getElementById("ytm-tauri-sponsorblock-toast");
