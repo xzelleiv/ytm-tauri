@@ -2,6 +2,8 @@
 param(
     [string]$CertificateThumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT,
     [string]$TimestampUrl = $env:WINDOWS_TIMESTAMP_URL,
+    [string]$UpdaterPrivateKeyPath = $env:TAURI_SIGNING_PRIVATE_KEY_PATH,
+    [string]$UpdaterPasswordFile = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD_FILE,
     [switch]$AllowUnsigned
 )
 
@@ -13,7 +15,39 @@ $temporaryConfig = $null
 $normalizedThumbprint = ($CertificateThumbprint -replace '\s', '').ToUpperInvariant()
 
 try {
-    $buildArguments = @('run', 'build:unsigned')
+    if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+        if ([string]::IsNullOrWhiteSpace($UpdaterPrivateKeyPath)) {
+            $defaultUpdaterKey = Join-Path $env:USERPROFILE '.tauri\ytm-tauri-updater.key'
+            if (Test-Path -LiteralPath $defaultUpdaterKey) {
+                $UpdaterPrivateKeyPath = $defaultUpdaterKey
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($UpdaterPrivateKeyPath)) {
+            throw 'Updater signing key is required. Set TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH.'
+        }
+        $resolvedUpdaterKey = Resolve-Path -LiteralPath $UpdaterPrivateKeyPath -ErrorAction Stop
+        $env:TAURI_SIGNING_PRIVATE_KEY = $resolvedUpdaterKey.Path
+    }
+    if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+        if ([string]::IsNullOrWhiteSpace($UpdaterPasswordFile)) {
+            $defaultPasswordFile = Join-Path $env:USERPROFILE '.tauri\ytm-tauri-updater-password.xml'
+            if (Test-Path -LiteralPath $defaultPasswordFile) {
+                $UpdaterPasswordFile = $defaultPasswordFile
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($UpdaterPasswordFile)) {
+            throw 'Updater signing password is required. Set TAURI_SIGNING_PRIVATE_KEY_PASSWORD or TAURI_SIGNING_PRIVATE_KEY_PASSWORD_FILE.'
+        }
+
+        $securePassword = Import-Clixml -LiteralPath $UpdaterPasswordFile
+        $credential = [PSCredential]::new('updater', $securePassword)
+        $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $credential.GetNetworkCredential().Password
+        if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw 'Updater signing password store is empty.'
+        }
+    }
+
+    $buildArguments = @('run', 'build:tauri')
 
     if ($normalizedThumbprint) {
         if ($normalizedThumbprint -notmatch '^[A-F0-9]{40}$') {

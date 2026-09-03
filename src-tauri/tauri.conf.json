@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "YouTube Music",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "app.ytmusic.desktop",
   "build": {
     "frontendDist": "../src",
@@ -15,6 +15,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "publisher": "xzelleiv",
     "copyright": "Copyright © 2026 xzelleiv. Original work by Henix.",
@@ -33,6 +34,28 @@
       "webviewInstallMode": {
         "type": "embedBootstrapper",
         "silent": true
+      },
+      "nsis": {
+        "installerHooks": "nsis/installer-hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": [
+          "wix/app-identity.wxs"
+        ],
+        "componentGroupRefs": [
+          "AppUserModelIdentityComponents"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZDRDA5QzYwMzFCQTRDNUEKUldSYVRMb3hZSnpRL0g0UEI3b1Iybm9aSXVqbUxWQkpjZVdqQVZCSmwzUlhaUCtuRGczTFd6N3cK",
+      "endpoints": [
+        "https://github.com/xzelleiv/ytm-tauri/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

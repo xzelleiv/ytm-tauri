@@ -1,7 +1,7 @@
 {
   "name": "yt-music-tauri",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "author": "xzelleiv",
   "contributors": [
     "Henix (Original Creator)"
@@ -11,7 +11,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "powershell -NoProfile -File scripts/build-windows.ps1",
-    "build:unsigned": "tauri build",
+    "build:unsigned": "powershell -NoProfile -File scripts/build-windows.ps1 -AllowUnsigned",
+    "build:tauri": "tauri build",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "test": "npm run test:js && npm run test:rust",
     "test:js": "node --test tests/*.test.mjs",

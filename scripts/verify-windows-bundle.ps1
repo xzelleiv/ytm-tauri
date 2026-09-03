@@ -55,6 +55,28 @@ if ($msiArtifacts.Count -eq 0 -or $setupArtifacts.Count -eq 0) {
     throw "Windows bundles for version $($package.version) are incomplete."
 }
 
+foreach ($artifact in @($msiArtifacts + $setupArtifacts)) {
+    $updaterSignaturePath = "$($artifact.FullName).sig"
+    if (-not (Test-Path -LiteralPath $updaterSignaturePath -PathType Leaf)) {
+        throw "Updater signature is missing for $($artifact.Name)."
+    }
+
+    try {
+        $encodedSignature = (Get-Content -Raw -LiteralPath $updaterSignaturePath).Trim()
+        $decodedSignature = [Text.Encoding]::UTF8.GetString(
+            [Convert]::FromBase64String($encodedSignature)
+        )
+    } catch {
+        throw "Updater signature is malformed for $($artifact.Name)."
+    }
+    if (
+        -not $decodedSignature.StartsWith('untrusted comment: signature from tauri secret key') -or
+        -not $decodedSignature.Contains("file:$($artifact.Name)")
+    ) {
+        throw "Updater signature metadata does not match $($artifact.Name)."
+    }
+}
+
 $signatureFailures = @()
 if ($RequireSignature) {
     $signatureFailures = foreach ($artifact in $artifacts) {
@@ -136,7 +158,38 @@ foreach ($msi in $msiArtifacts) {
     if ($binaryNames -notcontains 'MicrosoftEdgeWebview2Setup.exe') {
         throw "Embedded WebView2 bootstrapper is missing from $($msi.Name)."
     }
+
+    $identityView = Open-MsiQuery -Database $database -Query (
+        'SELECT `Name`, `Value` FROM `Registry` WHERE `Key` = ''Software\Classes\AppUserModelId\app.ytmusic.desktop'''
+    )
+    $identityValues = @{}
+    while ($true) {
+        $identityRecord = $identityView.GetType().InvokeMember(
+            'Fetch',
+            'InvokeMethod',
+            $null,
+            $identityView,
+            $null
+        )
+        if ($null -eq $identityRecord) {
+            break
+        }
+        $name = $identityRecord.GetType().InvokeMember(
+            'StringData', 'GetProperty', $null, $identityRecord, @(1)
+        )
+        $value = $identityRecord.GetType().InvokeMember(
+            'StringData', 'GetProperty', $null, $identityRecord, @(2)
+        )
+        $identityValues[$name] = $value
+    }
+    $identityView.GetType().InvokeMember('Close', 'InvokeMethod', $null, $identityView, $null) | Out-Null
+    if (
+        $identityValues.DisplayName -ne 'YouTube Music' -or
+        -not $identityValues.IconUri
+    ) {
+        throw "Windows application identity metadata is missing from $($msi.Name)."
+    }
 }
 
 $signatureMode = if ($RequireSignature) { 'signed' } else { 'signature optional' }
-Write-Host "Verified $($artifacts.Count) Windows artifacts ($signatureMode), MSI license, and WebView2 bootstrapper."
+Write-Host "Verified $($artifacts.Count) Windows artifacts ($signatureMode), updater signatures, MSI license, WebView2 bootstrapper, and application identity."

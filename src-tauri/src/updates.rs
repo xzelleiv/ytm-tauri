@@ -1,20 +1,15 @@
 use std::{
-    io::Read,
     sync::atomic::{AtomicBool, Ordering},
-    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use serde::Deserialize;
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::{platform, settings, settings::SharedSettings};
 
-const GITHUB_API_LATEST_RELEASE: &str =
-    "https://api.github.com/repos/xzelleiv/ytm-tauri/releases/latest";
-const MAX_RESPONSE_BYTES: usize = 65536; // 64 kib
-const STARTUP_CHECK_INTERVAL_SECS: u64 = 6 * 3600; // 6 hours
+const STARTUP_CHECK_INTERVAL_SECS: u64 = 6 * 3600;
 
 static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -22,16 +17,6 @@ static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 pub enum CheckMode {
     Startup,
     Manual,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-}
-
-pub enum UpdateResult {
-    Available { version: String, url: String },
-    Current,
 }
 
 pub fn check(app: &AppHandle, settings: &SharedSettings, mode: CheckMode) {
@@ -50,137 +35,105 @@ pub fn check(app: &AppHandle, settings: &SharedSettings, mode: CheckMode) {
 
     let app_handle = app.clone();
     let settings_handle = settings.clone();
-
-    thread::spawn(move || {
-        struct InFlightGuard;
-        impl Drop for InFlightGuard {
-            fn drop(&mut self) {
-                IN_FLIGHT.store(false, Ordering::SeqCst);
-            }
-        }
+    tauri::async_runtime::spawn(async move {
         let _guard = InFlightGuard;
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        if mode == CheckMode::Startup {
-            let snap = settings::snapshot(&settings_handle);
-            if let Some(last_check) = snap.last_update_check {
-                if now >= last_check && now.saturating_sub(last_check) < STARTUP_CHECK_INTERVAL_SECS
-                {
-                    return;
-                }
-            }
-        }
-
-        // record check time
-        settings::update(&settings_handle, |s| {
-            s.last_update_check = Some(now);
-        });
-
-        match fetch_latest_release() {
-            Ok(UpdateResult::Available { version, url }) => {
-                let snap = settings::snapshot(&settings_handle);
-                if mode == CheckMode::Startup {
-                    if snap.last_notified_version.as_deref() == Some(&version) {
-                        return;
-                    }
-                    let res = app_handle
-                        .notification()
-                        .builder()
-                        .title("YouTube Music Update Available")
-                        .body(format!("Version v{version} is available."))
-                        .show();
-                    if res.is_ok() {
-                        settings::update(&settings_handle, |s| {
-                            s.last_notified_version = Some(version);
-                        });
-                    }
-                } else {
-                    let install = platform::confirm(
-                        "YouTube Music Update",
-                        &format!("Version {version} is available. Open the download page?"),
-                    );
-                    if install {
-                        platform::open_url(&url);
-                    }
-                    settings::update(&settings_handle, |s| {
-                        s.last_notified_version = Some(version);
-                    });
-                }
-            }
-            Ok(UpdateResult::Current) => {
-                if mode == CheckMode::Manual {
-                    platform::info(
-                        "YouTube Music Update",
-                        &format!("Version {} is up to date.", env!("CARGO_PKG_VERSION")),
-                    );
-                }
-            }
-            Err(error) => {
-                if mode == CheckMode::Manual {
-                    platform::error("YouTube Music Update", &error);
-                }
-            }
-        }
+        run_check(&app_handle, &settings_handle, mode).await;
     });
 }
 
-fn fetch_latest_release() -> Result<UpdateResult, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent(format!("ytm-tauri/{}", env!("CARGO_PKG_VERSION")))
+async fn run_check(app: &AppHandle, settings_handle: &SharedSettings, mode: CheckMode) {
+    let now = unix_now();
+    if mode == CheckMode::Startup {
+        let last_check = settings::snapshot(settings_handle).last_update_check;
+        if !startup_check_due(last_check, now) {
+            return;
+        }
+    }
+
+    settings::update(settings_handle, |settings| {
+        settings.last_update_check = Some(now);
+    });
+
+    let updater = match app
+        .updater_builder()
+        .timeout(Duration::from_secs(120))
         .build()
-        .map_err(|err| format!("Could not create HTTP client: {err}"))?;
+    {
+        Ok(updater) => updater,
+        Err(error) => {
+            report_error(mode, &format!("Could not initialize the updater: {error}"));
+            return;
+        }
+    };
 
-    let mut response = client
-        .get(GITHUB_API_LATEST_RELEASE)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|err| format!("Could not check GitHub releases: {err}"))?;
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let version = update.version.clone();
+            settings::update(settings_handle, |settings| {
+                settings.last_notified_version = Some(version.clone());
+            });
 
-    let mut buffer = Vec::new();
-    response
-        .by_ref()
-        .take(MAX_RESPONSE_BYTES as u64)
-        .read_to_end(&mut buffer)
-        .map_err(|err| format!("Failed to read release response: {err}"))?;
+            let install = platform::confirm(
+                "YouTube Music Update",
+                &format!(
+                    "Version {version} is available.\n\nDownload the signed update, install it, and restart YouTube Music now?"
+                ),
+            );
+            if !install {
+                return;
+            }
 
-    parse_release_json(&buffer, env!("CARGO_PKG_VERSION"))
-}
+            let _ = app
+                .notification()
+                .builder()
+                .title("Updating YouTube Music")
+                .body(format!("Downloading signed version {version}."))
+                .show();
 
-pub fn parse_release_json(bytes: &[u8], current_ver: &str) -> Result<UpdateResult, String> {
-    let release: GitHubRelease =
-        serde_json::from_slice(bytes).map_err(|err| format!("Invalid release response: {err}"))?;
-
-    let latest_version = parse_tag_version(&release.tag_name)
-        .ok_or_else(|| format!("Invalid tag format: {}", release.tag_name))?;
-
-    let current_version = semver::Version::parse(current_ver)
-        .map_err(|_| "The installed version is invalid.".to_string())?;
-
-    if latest_version > current_version {
-        let derived_url = derive_release_url(&latest_version);
-        Ok(UpdateResult::Available {
-            version: latest_version.to_string(),
-            url: derived_url,
-        })
-    } else {
-        Ok(UpdateResult::Current)
+            if let Err(error) = update.download_and_install(|_, _| {}, || {}).await {
+                platform::error(
+                    "YouTube Music Update",
+                    &format!("The signed update could not be installed: {error}"),
+                );
+            }
+        }
+        Ok(None) => {
+            if mode == CheckMode::Manual {
+                platform::info(
+                    "YouTube Music Update",
+                    &format!("Version {} is up to date.", env!("CARGO_PKG_VERSION")),
+                );
+            }
+        }
+        Err(error) => report_error(mode, &format!("Could not check for updates: {error}")),
     }
 }
 
-pub fn parse_tag_version(tag: &str) -> Option<semver::Version> {
-    let clean = tag.trim().trim_start_matches(['v', 'V']);
-    semver::Version::parse(clean).ok()
+fn report_error(mode: CheckMode, message: &str) {
+    if mode == CheckMode::Manual {
+        platform::error("YouTube Music Update", message);
+    }
 }
 
-pub fn derive_release_url(version: &semver::Version) -> String {
-    format!("https://github.com/xzelleiv/ytm-tauri/releases/tag/v{version}")
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn startup_check_due(last_check: Option<u64>, now: u64) -> bool {
+    last_check.map_or(true, |last| {
+        now < last || now.saturating_sub(last) >= STARTUP_CHECK_INTERVAL_SECS
+    })
+}
+
+struct InFlightGuard;
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        IN_FLIGHT.store(false, Ordering::SeqCst);
+    }
 }
 
 #[cfg(test)]
@@ -188,48 +141,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_tag_versions_correctly() {
-        assert_eq!(
-            parse_tag_version("v1.2.3"),
-            Some(semver::Version::new(1, 2, 3))
-        );
-        assert_eq!(
-            parse_tag_version("V0.2.0"),
-            Some(semver::Version::new(0, 2, 0))
-        );
-        assert_eq!(
-            parse_tag_version("1.0.0"),
-            Some(semver::Version::new(1, 0, 0))
-        );
-        assert_eq!(parse_tag_version("invalid-tag"), None);
-    }
+    fn startup_checks_are_rate_limited_without_hiding_clock_rollback() {
+        let now = 100_000;
 
-    #[test]
-    fn derives_release_url_strictly_from_version() {
-        let v = semver::Version::new(0, 2, 1);
-        assert_eq!(
-            derive_release_url(&v),
-            "https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.1"
-        );
-    }
-
-    #[test]
-    fn parses_github_release_payload() {
-        let payload = br#"{"tag_name":"v1.0.0","name":"v1.0.0","draft":false,"prerelease":false}"#;
-        match parse_release_json(payload, "0.9.0").unwrap() {
-            UpdateResult::Available { version, url } => {
-                assert_eq!(version, "1.0.0");
-                assert_eq!(
-                    url,
-                    "https://github.com/xzelleiv/ytm-tauri/releases/tag/v1.0.0"
-                );
-            }
-            UpdateResult::Current => panic!("Expected update available"),
-        }
-
-        match parse_release_json(payload, "1.0.0").unwrap() {
-            UpdateResult::Current => {}
-            UpdateResult::Available { .. } => panic!("Expected up to date"),
-        }
+        assert!(startup_check_due(None, now));
+        assert!(!startup_check_due(Some(now - 1_000), now));
+        assert!(startup_check_due(
+            Some(now - STARTUP_CHECK_INTERVAL_SECS),
+            now
+        ));
+        assert!(startup_check_due(Some(now + 10_000), now));
     }
 }

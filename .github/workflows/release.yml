@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Validate release version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Release tag $env:GITHUB_REF_NAME does not match package version v$version."
+          }
+
+      - name: Import Windows signing certificate
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          if (
+            [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -or
+            [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) -or
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64) -or
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD) -or
+            [string]::IsNullOrWhiteSpace($env:WINDOWS_TIMESTAMP_URL)
+          ) {
+            throw 'Updater and Windows code-signing secrets are required for a release.'
+          }
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'ytm-tauri-code-signing.pfx'
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
+          )
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate `
+            -FilePath $certificatePath `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -Password $password `
+            -Exportable
+          if (-not $certificate.HasPrivateKey) {
+            throw 'Imported certificate has no private key.'
+          }
+
+          $signingConfigPath = Join-Path $env:RUNNER_TEMP 'ytm-tauri-signing.json'
+          @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm = 'sha256'
+                timestampUrl = $env:WINDOWS_TIMESTAMP_URL
+              }
+            }
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $signingConfigPath -Encoding UTF8
+
+          "TAURI_SIGNING_CONFIG=$signingConfigPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "IMPORTED_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "IMPORTED_CERTIFICATE_PATH=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build and publish signed updater release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: YouTube Music v__VERSION__
+          releaseBody: Signed Windows installers and in-app updater metadata.
+          releaseDraft: false
+          prerelease: false
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          args: --config "${{ env.TAURI_SIGNING_CONFIG }}"
+
+      - name: Remove imported signing material
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:IMPORTED_CERTIFICATE_THUMBPRINT) {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:IMPORTED_CERTIFICATE_THUMBPRINT" -Force -ErrorAction SilentlyContinue
+          }
+          if ($env:IMPORTED_CERTIFICATE_PATH) {
+            Remove-Item -LiteralPath $env:IMPORTED_CERTIFICATE_PATH -Force -ErrorAction SilentlyContinue
+          }
