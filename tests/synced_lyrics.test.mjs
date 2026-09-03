@@ -123,10 +123,15 @@ function createRuntime() {
       const interval = intervals.find((item) => item.id === id);
       if (interval) interval.cleared = true;
     },
-    setTimeout() {
+    setTimeout(fn, delay) {
+      if (typeof fn === "function") {
+        return globalThis.setTimeout(fn, Math.min(delay || 0, 10));
+      }
       return 1;
     },
-    clearTimeout() {},
+    clearTimeout(id) {
+      return globalThis.clearTimeout(id);
+    },
     addEventListener(name, handler) {
       doc.addEventListener(name, handler);
     },
@@ -232,5 +237,58 @@ test("synced lyrics updates its active timing interval without restart", () => {
   assert.ok(intervals.some((interval) => interval.delay === 250 && !interval.cleared));
   assert.ok(intervals.filter((interval) => interval.delay === 100).every((interval) => interval.cleared));
   plugin.stop();
+});
+
+test("parseRetryAfter handles integer seconds and HTTP Date strings with bounds", () => {
+  const { features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+  assert.equal(typeof plugin.parseRetryAfter, "function");
+
+  assert.equal(plugin.parseRetryAfter("120"), 120);
+  assert.equal(plugin.parseRetryAfter("10"), 10);
+  assert.equal(plugin.parseRetryAfter("1000"), 300); // clamped to 300
+  assert.equal(plugin.parseRetryAfter(null), 60); // default
+  assert.equal(plugin.parseRetryAfter("invalid"), 60); // default on invalid
+
+  const future = new Date(Date.now() + 45000).toUTCString();
+  const diff = plugin.parseRetryAfter(future);
+  assert.ok(diff >= 40 && diff <= 50);
+});
+
+test("fetchLrcLib honors 429 Retry-After and suppresses subsequent calls", async () => {
+  let fetchAttempts = 0;
+  const { context, features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+
+  context.fetch = async () => {
+    fetchAttempts++;
+    return {
+      status: 429,
+      ok: false,
+      headers: {
+        get(key) {
+          return key.toLowerCase() === "retry-after" ? "60" : null;
+        },
+      },
+    };
+  };
+
+  const res1 = await plugin.fetchLrcLib({ title: "Song One", artist: "Artist One" }, 0);
+  assert.equal(res1, null);
+  assert.equal(fetchAttempts, 1);
+
+  // Subsequent call during cooldown should be suppressed without network fetch
+  const res2 = await plugin.fetchLrcLib({ title: "Song Two", artist: "Artist Two" }, 0);
+  assert.equal(res2, null);
+  assert.equal(fetchAttempts, 1);
+});
+
+test("fetchLrcLib aborts execution when track epoch changes", async () => {
+  const { context, features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+
+  // If epoch passed does not match currentTrackEpoch (which is initialized to 0), it aborts immediately
+  const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 999);
+  assert.equal(res, null);
 });
 

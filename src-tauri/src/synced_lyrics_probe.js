@@ -9,7 +9,7 @@
   const STYLE_ID = "ytm-tauri-synced-lyrics-style";
   const CONTAINER_ID = "synced-lyrics-container";
   const STAR_KEY = "ytmd-sl-starred-";
-  const CACHE_LIMIT = 40;
+  const CACHE_LIMIT = 100;
   const CACHE = new Map();
 
   let headerObserver = null;
@@ -938,7 +938,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       render();
     }
     try {
-      const data = await providerSearch(name, info);
+      const data = await providerSearch(name, info, epoch);
       provider.state = "done";
       provider.data = data;
     } catch (error) {
@@ -1029,25 +1029,57 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     render();
   }
 
-  function providerSearch(name, info) {
+  let lrclibBlockedUntil = 0;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function parseRetryAfter(header) {
+    if (!header) return 60;
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds, 300);
+    const parsedDate = Date.parse(header);
+    if (Number.isFinite(parsedDate)) {
+      const diff = Math.ceil((parsedDate - Date.now()) / 1000);
+      return diff > 0 ? Math.min(diff, 300) : 60;
+    }
+    return 60;
+  }
+
+  function providerSearch(name, info, epoch = currentTrackEpoch) {
     switch (name) {
       case "YTMusic": return fetchYtmLyrics(info);
-      case "LRCLib": return fetchLrcLib(info);
+      case "LRCLib": return fetchLrcLib(info, epoch);
       default: return Promise.resolve(null);
     }
   }
 
   async function directFetchJson(url) {
+    if (Date.now() < lrclibBlockedUntil) {
+      return null;
+    }
     const headers = { "Lrclib-Client": "ytm-tauri/0.2.4 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
       const res = await window.fetch(url, { headers });
+      if (res.status === 429) {
+        const retryAfter = parseRetryAfter(res.headers?.get?.("retry-after"));
+        lrclibBlockedUntil = Date.now() + retryAfter * 1000;
+        return null;
+      }
       if (res.ok) {
         return await res.json();
       }
     } catch {
-      // fallback
+      // network fallback
     }
-    return requestJson(url, { headers });
+    if (Date.now() < lrclibBlockedUntil) {
+      return null;
+    }
+    const bridged = await requestJson(url, { headers });
+    if (bridged?.__status === 429) {
+      const retryAfter = parseRetryAfter(bridged.__retryAfter);
+      lrclibBlockedUntil = Date.now() + retryAfter * 1000;
+      return null;
+    }
+    return bridged;
   }
 
   function dice(first, second) {
@@ -1107,7 +1139,10 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     return score;
   }
 
-  async function fetchLrcLib(info) {
+  async function fetchLrcLib(info, epoch = currentTrackEpoch) {
+    if (epoch !== currentTrackEpoch || Date.now() < lrclibBlockedUntil) {
+      return null;
+    }
     const cleanTitle = cleanSongTitle(info.title);
     const cleanArt = cleanArtist(info.artist);
 
@@ -1122,6 +1157,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
       const getUrl = `https://lrclib.net/api/get?${getParams.toString()}`;
       const exact = await directFetchJson(getUrl);
+      if (epoch !== currentTrackEpoch) return null;
       if (exact && typeof exact === "object" && !Array.isArray(exact)) {
         if (!exact.instrumental && (exact.syncedLyrics || exact.plainLyrics)) {
           const score = scoreCandidate(exact.artistName, exact.trackName, exact.duration || 0, info);
@@ -1142,6 +1178,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     // structured clean query
     if (cleanTitle) {
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      await sleep(250);
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
       const query = new URLSearchParams({
         artist_name: cleanArt || info.artist,
         track_name: cleanTitle,
@@ -1151,6 +1190,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       }
       const url = `https://lrclib.net/api/search?${query.toString()}`;
       const res = await directFetchJson(url);
+      if (epoch !== currentTrackEpoch) return null;
       if (Array.isArray(res) && res.length > 0) {
         data = res;
       }
@@ -1158,12 +1198,16 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     // structured raw query
     if (!data.length && info.title) {
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      await sleep(250);
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
       const query = new URLSearchParams({
         artist_name: info.artist,
         track_name: info.title,
       });
       const url = `https://lrclib.net/api/search?${query.toString()}`;
       const res = await directFetchJson(url);
+      if (epoch !== currentTrackEpoch) return null;
       if (Array.isArray(res) && res.length > 0) {
         data = res;
       }
@@ -1171,16 +1215,20 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     // fallback query
     if (!data.length) {
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      await sleep(250);
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
       const q = `${cleanArt || info.artist} ${cleanTitle || info.title}`.trim();
       const query = new URLSearchParams({ q });
       const url = `https://lrclib.net/api/search?${query.toString()}`;
       const res = await directFetchJson(url);
+      if (epoch !== currentTrackEpoch) return null;
       if (Array.isArray(res) && res.length > 0) {
         data = res;
       }
     }
 
-    if (!data.length) return null;
+    if (!data.length || epoch !== currentTrackEpoch) return null;
 
     const scored = data
       .filter((item) => !item.instrumental && (item.syncedLyrics || item.plainLyrics))
@@ -1247,6 +1295,10 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
   async function requestJson(url, init) {
     const response = await runtime.request(url, init);
+    if (response?.status === 429) {
+      const retryHeader = response.headers?.["retry-after"] || response.headers?.["Retry-After"];
+      return { __status: 429, __retryAfter: retryHeader };
+    }
     if (!response?.ok || !response.body) return null;
     try {
       return JSON.parse(response.body);
@@ -1962,5 +2014,5 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     render();
   }
 
-  runtime.register("synced_lyrics", { start, stop, update });
+  runtime.register("synced_lyrics", { start, stop, update, fetchLrcLib, parseRetryAfter });
 })();
