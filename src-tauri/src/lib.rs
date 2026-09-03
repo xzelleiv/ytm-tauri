@@ -51,6 +51,7 @@ const CROSSFADE_SCRIPT: &str = include_str!("crossfade_probe.js");
 const SETTINGS_PROBE_SCRIPT: &str = include_str!("settings_probe.js");
 const YTM_TRANSFER_SCRIPT: &str = include_str!("ytm_transfer_probe.js");
 const SPOTIFY_TRANSFER_SCRIPT: &str = include_str!("spotify_transfer_probe.js");
+const AUTH_RECOVERY_SCRIPT: &str = include_str!("auth_recovery_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -178,7 +179,7 @@ pub fn run() {
                 .on_navigation(move |url| {
                     let allowed = is_allowed_navigation_url(url);
 
-                    if !is_youtube_music_url(url) {
+                    if !is_youtube_music_url(url) && !url_policy::is_auth_intermediate_url(url) {
                         presence_for_navigation.clear();
                         scrobbler_for_navigation.clear();
                         notifications_for_navigation.clear();
@@ -294,7 +295,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
             "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
         )
     } else {
-        format!("{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{TRACK_PROBE_SCRIPT}")
+        format!("{AUTH_RECOVERY_SCRIPT}\n{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{TRACK_PROBE_SCRIPT}")
     }
 }
 

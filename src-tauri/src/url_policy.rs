@@ -241,6 +241,22 @@ pub fn is_youtube_music_url(url: &Url) -> bool {
     url.scheme() == "https" && url.host_str() == Some("music.youtube.com")
 }
 
+pub fn is_auth_intermediate_url(url: &Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if !host_matches_domain(host, "youtube.com") && !host_matches_domain(host, "google.com") {
+        return false;
+    }
+    let path = url.path();
+    path.contains("/accounts/SetSID")
+        || path.contains("/CheckCookie")
+        || path.contains("/signin_passive")
+        || url
+            .query()
+            .is_some_and(|q| q.contains("action_handle_signin=true"))
+}
+
 pub fn is_allowed_spotify_auth_url(url: &Url) -> bool {
     match url.scheme() {
         "about" => url.as_str() == "about:blank",
@@ -483,5 +499,28 @@ mod tests {
         let too_long = format!("https://music.youtube.com/{path}");
 
         assert_eq!(valid_track_url(Some(&too_long)), None);
+    }
+
+    #[test]
+    fn detects_auth_intermediate_urls() {
+        assert!(is_auth_intermediate_url(&parse_url(
+            "https://accounts.youtube.com/accounts/SetSID?ss_c=1"
+        )));
+        assert!(is_auth_intermediate_url(&parse_url(
+            "https://accounts.google.com/CheckCookie?continue=https://youtube.com"
+        )));
+        assert!(is_auth_intermediate_url(&parse_url(
+            "https://www.youtube.com/signin_passive"
+        )));
+        assert!(is_auth_intermediate_url(&parse_url(
+            "https://music.youtube.com/?action_handle_signin=true"
+        )));
+
+        assert!(!is_auth_intermediate_url(&parse_url(
+            "https://music.youtube.com/watch?v=123"
+        )));
+        assert!(!is_auth_intermediate_url(&parse_url(
+            "https://accounts.google.com/signin/v2/identifier"
+        )));
     }
 }
