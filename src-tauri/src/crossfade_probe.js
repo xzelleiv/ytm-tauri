@@ -118,13 +118,24 @@
     }, 50);
   }
 
+  function extractTrackId(detail) {
+    if (!detail) return null;
+    if (detail.videoId) return detail.videoId;
+    if (detail.title && detail.author) return `${detail.title}::${detail.author}`;
+    if (detail.title) return detail.title;
+    return null;
+  }
+
   function onTrackChange(detail) {
     if (!active) return;
-    const currentUrl = detail?.url || location.href;
-    if (currentUrl !== lastTrackUrl) {
-      lastTrackUrl = currentUrl;
+    const id = extractTrackId(detail);
+    if (!id) return;
+    if (id !== lastTrackUrl) {
+      lastTrackUrl = id;
       trackChangeFired = true;
-      fadeIn();
+      if (boundMedia && boundMedia.currentTime < 1.5) {
+        fadeIn();
+      }
     }
   }
 
