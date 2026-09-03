@@ -14,7 +14,9 @@ option for every direct dependency offered under `MIT OR Apache-2.0`.
 | --- | --- | --- | --- |
 | Tauri | 2.11.5 | MIT (selected) | Desktop app framework |
 | Tauri global-shortcut plugin | 2.3.2 | MIT (selected) | Global playback shortcuts |
-| Tauri single-instance plugin | 2.4.2 | MIT (selected) | Reuses the existing app window |
+| Tauri notification plugin | 2.4.0 | MIT (selected) | Native Windows notifications |
+| Tauri single-instance plugin | 2.4.4 | MIT (selected) | Reuses the existing app window |
+| Tauri updater plugin | 2.11.0 | MIT (selected) | In-app application updater |
 | Tauri window-state plugin | 2.4.1 | MIT (selected) | Persists window size and position |
 | discord-rich-presence | 1.1.0 | MIT | Discord Rich Presence IPC |
 | reqwest | 0.13.4 | MIT (selected) | GitHub release checks |
@@ -23,7 +25,7 @@ option for every direct dependency offered under `MIT OR Apache-2.0`.
 | serde_json | 1.0.150 | MIT (selected) | JSON parsing |
 | webview2-com | 0.38.2 | MIT | Windows WebView2 COM bindings |
 | windows | 0.61.3 | MIT (selected) | Windows API bindings |
-| winreg | 0.55.0 | MIT | Windows startup registration |
+| winreg | 0.56.0 | MIT | Windows startup registration |
 
 ## Build Tooling
 
