@@ -29,6 +29,8 @@ use tauri::{Manager, Theme, Url, WebviewUrl, WindowEvent};
 use url_policy::{is_allowed_navigation_url, is_youtube_music_url};
 
 const YOUTUBE_MUSIC_URL: &str = "https://music.youtube.com";
+pub const DESKTOP_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const AD_BLOCK_SCRIPT: &str = include_str!("adblock_probe.js");
 const FEATURE_PROBE_SCRIPT: &str = include_str!("feature_probe.js");
 const AUDIO_ENGINE_SCRIPT: &str = include_str!("audio_engine_probe.js");
@@ -171,6 +173,7 @@ pub fn run() {
                 .center()
                 .devtools(true)
                 .zoom_hotkeys_enabled(false)
+                .user_agent(DESKTOP_USER_AGENT)
                 .initialization_script(initialization_script(&initial))
                 .on_navigation(move |url| {
                     let allowed = is_allowed_navigation_url(url);

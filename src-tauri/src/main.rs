@@ -16,7 +16,10 @@ fn set_windows_app_identity() {}
 fn main() {
     std::env::set_var(
         "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--autoplay-policy=no-user-gesture-required",
+        format!(
+            "--autoplay-policy=no-user-gesture-required --user-agent=\"{}\"",
+            yt_music_tauri_lib::DESKTOP_USER_AGENT
+        ),
     );
     set_windows_app_identity();
     yt_music_tauri_lib::run();

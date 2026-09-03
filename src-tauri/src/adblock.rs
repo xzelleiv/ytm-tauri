@@ -142,7 +142,13 @@ unsafe fn blocked_response(
     webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2WebResourceResponse,
 > {
     let status = HSTRING::from("No Content");
-    let headers = HSTRING::from("Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n");
+    let headers = HSTRING::from(
+        "Access-Control-Allow-Origin: https://music.youtube.com\r\n\
+         Access-Control-Allow-Credentials: true\r\n\
+         Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
+         Access-Control-Allow-Headers: *\r\n\
+         Cache-Control: no-store\r\n",
+    );
     environment.CreateWebResourceResponse(None, 204, &status, &headers)
 }
 
