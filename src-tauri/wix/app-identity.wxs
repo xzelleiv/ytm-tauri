@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?if $(sys.BUILDARCH)="x86"?>
+  <?define IdentityWin64 = "no" ?>
+<?else?>
+  <?define IdentityWin64 = "yes" ?>
+<?endif?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="AppUserModelIdentity" Guid="*" Win64="$(var.IdentityWin64)">
+        <RegistryKey Root="HKCU" Key="Software\Classes\AppUserModelId\app.ytmusic.desktop">
+          <RegistryValue Name="DisplayName" Type="string" Value="YouTube Music" KeyPath="yes" />
+          <RegistryValue Name="IconUri" Type="string" Value="[INSTALLDIR]yt-music-tauri.exe" />
+          <RegistryValue Name="ShowInSettings" Type="integer" Value="1" />
+        </RegistryKey>
+      </Component>
+    </DirectoryRef>
+    <ComponentGroup Id="AppUserModelIdentityComponents">
+      <ComponentRef Id="AppUserModelIdentity" />
+    </ComponentGroup>
+  </Fragment>
+</Wix>

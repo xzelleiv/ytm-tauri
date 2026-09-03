@@ -82,6 +82,7 @@ const AD_BLOCK_SELF_TEST_SCRIPT: &str = r#"
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = platform::register_app_identity();
     let settings = settings::load();
     settings::update(&settings, |value| {
         value.launch_at_startup = platform::startup_enabled()
@@ -259,6 +260,9 @@ pub fn run() {
                     }
                 })
                 .build()?;
+            if let Err(error) = platform::set_window_app_identity(&window) {
+                eprintln!("failed to set Windows window identity: {error}");
+            }
             let windows_settings = state.settings.clone();
             let updates_settings = state.settings.clone();
             controls::install(app, state)?;
@@ -292,7 +296,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
         format!(
-            "{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
+            "{AUTH_RECOVERY_SCRIPT}\n{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{AD_BLOCK_SELF_TEST_SCRIPT}\n{TRACK_PROBE_SCRIPT}"
         )
     } else {
         format!("{AUTH_RECOVERY_SCRIPT}\n{ad_block}\n{features}\n{AD_BLOCK_SCRIPT}\n{page_features}\n{TRACK_PROBE_SCRIPT}")
