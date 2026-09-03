@@ -22,6 +22,9 @@
   const REVIEW_PAGE_SIZE = 50;
   let isMatchingActive = false;
   let isTransferActive = false;
+  let authEpoch = 0;
+  let libraryEpoch = 0;
+  let workflowEpoch = 0;
 
   function logDebug(msg, data = null) {
     const time = new Date().toTimeString().split(" ")[0] + "." + String(Date.now() % 1000).padStart(3, "0");
@@ -101,12 +104,13 @@
     emit(event, payload) {
       logDebug(`emit event=${event}`, payload);
       if (event === "session_connected") {
+        authEpoch += 1;
         isConnected = true;
         connectedUser = payload?.user_name || "Spotify User";
         authStatus = null;
         updateNavButtonText();
         if (activeView === "home") {
-          loadLibrary();
+          loadLibrary(authEpoch);
         }
       } else if (event === "session_error") {
         authStatus = payload?.error || "Spotify authentication failed";
@@ -433,7 +437,19 @@
     };
 
     tryInsert();
-    setInterval(tryInsert, 2000);
+    if (typeof MutationObserver !== "function" || !document.documentElement) return;
+    let insertScheduled = false;
+    const scheduleInsert = () => {
+      if (insertScheduled) return;
+      insertScheduled = true;
+      const schedule = window.requestAnimationFrame || ((callback) => setTimeout(callback, 16));
+      schedule(() => {
+        insertScheduled = false;
+        tryInsert();
+      });
+    };
+    const observer = new MutationObserver(scheduleInsert);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   function createModal() {
@@ -528,26 +544,32 @@
   }
 
   async function checkStatus() {
+    const epoch = ++authEpoch;
     try {
       const res = await bridge.send({ action: "get_status" });
+      if (epoch !== authEpoch) return;
       isConnected = !!res.is_authenticated;
       connectedUser = res.user_name;
     } catch {}
+    if (epoch !== authEpoch) return;
     renderView();
-    if (isConnected) {
-      loadLibrary();
+    if (isConnected && (!userPlaylists.length || libraryError)) {
+      loadLibrary(epoch);
     }
   }
 
   let isLoadingLibrary = false;
   let libraryError = null;
 
-  async function loadLibrary() {
+  async function loadLibrary(expectedAuthEpoch = authEpoch) {
+    if (!isConnected || expectedAuthEpoch !== authEpoch) return;
+    const requestEpoch = ++libraryEpoch;
     isLoadingLibrary = true;
     libraryError = null;
     renderView();
     try {
       const res = await bridge.send({ action: "list_playlists" });
+      if (requestEpoch !== libraryEpoch || expectedAuthEpoch !== authEpoch || !isConnected) return;
       if (res.ok) {
         userPlaylists = res.playlists || [];
         libraryError = null;
@@ -555,8 +577,10 @@
         libraryError = res.error || "Failed to load playlists";
       }
     } catch (err) {
+      if (requestEpoch !== libraryEpoch || expectedAuthEpoch !== authEpoch || !isConnected) return;
       libraryError = String(err);
     } finally {
+      if (requestEpoch !== libraryEpoch || expectedAuthEpoch !== authEpoch || !isConnected) return;
       isLoadingLibrary = false;
       renderView();
     }
@@ -663,13 +687,8 @@
             </div>
             <div style="display:flex; flex-direction:column; gap:12px;">
               <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                <button id="ytm-spot-inapp-login" class="ytm-spot-btn ytm-spot-btn-green" style="padding:10px 20px; font-size:13px;">Sign in with Spotify</button>
-                <button id="ytm-spot-browser-login" class="ytm-spot-btn" style="padding:10px 16px; font-size:13px;">Use Browser</button>
+                <button id="ytm-spot-browser-login" class="ytm-spot-btn ytm-spot-btn-green" style="padding:10px 20px; font-size:13px;">Sign in with Spotify</button>
                 <button id="ytm-spot-check-status-btn" class="ytm-spot-btn" style="padding:10px 16px; font-size:13px;">Check Login</button>
-              </div>
-              <div style="display:flex; gap:6px; align-items:center; margin-top:4px;">
-                <input id="ytm-spot-manual-token" class="ytm-spot-input" style="font-size:12px; padding:8px 12px;" placeholder="Or paste sp_dc cookie / accessToken..." />
-                <button id="ytm-spot-manual-token-btn" class="ytm-spot-btn" style="padding:8px 14px; font-size:12px; white-space:nowrap;">Connect</button>
               </div>
               ${authStatus ? `<div style="font-size:12px; color:#ff8a80; line-height:1.4;">${escapeHtml(authStatus)}</div>` : ""}
             </div>
@@ -699,9 +718,7 @@
     container.innerHTML = `
       <div class="ytm-spot-tabs">
         <button class="ytm-spot-tab-btn ${activeHomeTab === "link" ? "active" : ""}" data-tab="link">Paste Link</button>
-        <!-- devmode only
         <button class="ytm-spot-tab-btn ${activeHomeTab === "library" ? "active" : ""}" data-tab="library">Spotify Library${isConnected ? " (Connected)" : ""}</button>
-        -->
         <button class="ytm-spot-tab-btn ${activeHomeTab === "file" ? "active" : ""}" data-tab="file">Import File / Text</button>
       </div>
       ${tabContentHtml}
@@ -732,61 +749,23 @@
       checkStatusBtn.onclick = () => checkStatus();
     }
 
-    const manualTokenBtn = document.getElementById("ytm-spot-manual-token-btn");
-    if (manualTokenBtn) {
-      manualTokenBtn.onclick = async () => {
-        const input = document.getElementById("ytm-spot-manual-token");
-        const token = input?.value?.trim();
-        if (!token) return;
-        authStatus = "Connecting...";
-        renderView();
-        try {
-          const res = await bridge.send({ action: "set_token", token });
-          if (res.ok) {
-            isConnected = true;
-            connectedUser = res.user_name || "Spotify User";
-            authStatus = null;
-            renderView();
-            loadLibrary();
-          } else {
-            authStatus = res.error || "Failed to connect token";
-            renderView();
-          }
-        } catch (err) {
-          authStatus = String(err);
-          renderView();
-        }
-      };
-    }
-
-    const inAppLoginBtn = document.getElementById("ytm-spot-inapp-login");
-    if (inAppLoginBtn) {
-      inAppLoginBtn.onclick = async () => {
-        authStatus = null;
-        inAppLoginBtn.disabled = true;
-        inAppLoginBtn.textContent = "Opening Spotify...";
-        try {
-          await bridge.send({ action: "open_login" });
-        } catch (error) {
-          authStatus = error.message;
-          renderView();
-        }
-      };
-    }
-
     const browserLoginBtn = document.getElementById("ytm-spot-browser-login");
     if (browserLoginBtn) {
       browserLoginBtn.onclick = async () => {
+        const epoch = ++authEpoch;
+        libraryEpoch += 1;
         authStatus = null;
         browserLoginBtn.disabled = true;
         browserLoginBtn.textContent = "Opening browser...";
         try {
           const response = await bridge.send({ action: "open_browser_login" });
+          if (epoch !== authEpoch) return;
           authStatus = response.auth_mode === "oauth_pkce"
             ? "Complete Spotify authorization in your browser."
             : "The browser helper is ready for a web access token or sp_dc cookie.";
           renderView();
         } catch (error) {
+          if (epoch !== authEpoch) return;
           authStatus = error.message;
           renderView();
         }
@@ -796,11 +775,22 @@
     const logoutBtn = document.getElementById("ytm-spot-logout");
     if (logoutBtn) {
       logoutBtn.onclick = async () => {
-        await bridge.send({ action: "logout" });
+        const epoch = ++authEpoch;
+        libraryEpoch += 1;
         isConnected = false;
         connectedUser = null;
         userPlaylists = [];
+        isLoadingLibrary = false;
+        libraryError = null;
         renderView();
+        try {
+          await bridge.send({ action: "logout" });
+        } catch (error) {
+          if (epoch === authEpoch) {
+            authStatus = error.message;
+            renderView();
+          }
+        }
       };
     }
 
@@ -929,6 +919,8 @@
   }
 
   async function handleStartLink(link) {
+    const epoch = ++workflowEpoch;
+    isMatchingActive = false;
     logDebug("start link parse", link);
     const container = document.getElementById("ytm-spot-modal-content");
     if (container) {
@@ -946,6 +938,8 @@
       const cancelBtn = document.getElementById("ytm-spot-cancel-fetch");
       if (cancelBtn) {
         cancelBtn.onclick = () => {
+          if (epoch !== workflowEpoch) return;
+          workflowEpoch += 1;
           activeView = "home";
           renderView();
         };
@@ -966,6 +960,7 @@
       if (progress) progress.textContent = "Querying native backend bridge...";
 
       const res = await bridge.send({ action: "parse_link", link });
+      if (epoch !== workflowEpoch) return;
       tracks = res.tracks || [];
       playlist = res.playlist;
     } catch (bridgeErr) {
@@ -975,9 +970,11 @@
 
       try {
         const fallbackRes = await fetchEmbedViaFeatures(link);
+        if (epoch !== workflowEpoch) return;
         tracks = fallbackRes.tracks || [];
         playlist = fallbackRes.playlist;
       } catch (fallbackErr) {
+        if (epoch !== workflowEpoch) return;
         logDebug("fallback failed", fallbackErr.message);
         if (container) {
           container.innerHTML = `
@@ -1038,19 +1035,24 @@
       is_explicit: t.is_explicit,
     }));
 
-    startMatchingJob(playlist?.name || "Spotify Playlist", playlist?.description, sourceTracks);
+    if (epoch !== workflowEpoch) return;
+    startMatchingJob(playlist?.name || "Spotify Playlist", playlist?.description, sourceTracks, epoch);
   }
 
   async function handleStartRawText(raw_text) {
+    const epoch = ++workflowEpoch;
+    isMatchingActive = false;
     try {
       const res = await bridge.send({ action: "parse_raw_text", raw_text });
+      if (epoch !== workflowEpoch) return;
       const sourceTracks = res.source_tracks || [];
       if (!sourceTracks.length) {
         alert("No tracks found in text.");
         return;
       }
-      startMatchingJob(res.playlist?.name || "Imported Playlist", res.playlist?.description, sourceTracks);
+      startMatchingJob(res.playlist?.name || "Imported Playlist", res.playlist?.description, sourceTracks, epoch);
     } catch (err) {
+      if (epoch !== workflowEpoch) return;
       alert(`Error parsing input: ${err.message}`);
     }
   }
@@ -1106,7 +1108,8 @@
     return candidate;
   }
 
-  function startMatchingJob(playlistTitle, playlistDesc, sourceTracks) {
+  function startMatchingJob(playlistTitle, playlistDesc, sourceTracks, epoch = ++workflowEpoch) {
+    if (epoch !== workflowEpoch) return;
     logDebug("starting in-memory matching job", {
       title: playlistTitle,
       tracks: sourceTracks.length,
@@ -1138,15 +1141,15 @@
     isMatchingActive = true;
     updateNavButtonText();
     renderView();
-    runMatchingPipeline();
+    runMatchingPipeline(epoch, currentJob);
   }
 
-  async function runMatchingPipeline() {
-    if (!currentJob || !window.__ytmTransferAdapter) return;
-    const tracks = currentJob.tracks || [];
+  async function runMatchingPipeline(epoch, job) {
+    if (!job || currentJob !== job || epoch !== workflowEpoch || !window.__ytmTransferAdapter) return;
+    const tracks = job.tracks || [];
 
     for (let i = 0; i < tracks.length; i++) {
-      if (!isMatchingActive || !currentJob) break;
+      if (!isMatchingActive || currentJob !== job || epoch !== workflowEpoch) return;
       const t = tracks[i].source;
       let rawCandidates = [];
       try {
@@ -1154,6 +1157,7 @@
       } catch (e) {
         logDebug(`search error on track ${i}`, e.message);
       }
+      if (!isMatchingActive || currentJob !== job || epoch !== workflowEpoch) return;
 
       const scored = (rawCandidates || []).map((c, r) => scoreCandidate(t, c, r));
       scored.sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -1170,16 +1174,16 @@
         tracks[i].match_type = "unmatched";
       }
 
-      currentJob.progress.current = i + 1;
-      currentJob.progress.matched = tracks.filter((x) => x.match_type === "high").length;
-      currentJob.progress.needs_review = tracks.filter((x) => x.match_type === "review").length;
-      currentJob.progress.unmatched = tracks.filter((x) => x.match_type === "unmatched").length;
+      job.progress.current = i + 1;
+      job.progress.matched = tracks.filter((x) => x.match_type === "high").length;
+      job.progress.needs_review = tracks.filter((x) => x.match_type === "review").length;
+      job.progress.unmatched = tracks.filter((x) => x.match_type === "unmatched").length;
 
       updateMatchingProgress();
       updateNavButtonText();
     }
 
-    if (isMatchingActive) {
+    if (isMatchingActive && currentJob === job && epoch === workflowEpoch) {
       isMatchingActive = false;
       activeView = "review";
       updateNavButtonText();
@@ -1223,6 +1227,7 @@
     `;
 
     document.getElementById("ytm-spot-cancel-match").onclick = () => {
+      workflowEpoch += 1;
       isMatchingActive = false;
       activeView = "home";
       currentJob = null;
@@ -1390,13 +1395,16 @@
   }
 
   async function executeTransfer(playlistTitle, privacy) {
+    if (!currentJob || isTransferActive) return;
+    const epoch = ++workflowEpoch;
+    const job = currentJob;
     activeView = "transferring";
     isTransferActive = true;
     updateNavButtonText();
     renderView();
 
     try {
-      const validTracks = (currentJob.tracks || []).filter(
+      const validTracks = (job.tracks || []).filter(
         (t) => t.status !== "skipped" && t.selected_candidate?.video_id
       );
       const videoIds = validTracks.map((t) => t.selected_candidate.video_id);
@@ -1416,12 +1424,13 @@
 
       const playlistId = await window.__ytmTransferAdapter.createPlaylist(
         playlistTitle,
-        currentJob.playlist_description || "Transferred via YouTube Music Desktop",
+        job.playlist_description || "Transferred via YouTube Music Desktop",
         privacy,
         initialBatch
       );
+      if (epoch !== workflowEpoch || currentJob !== job) return;
 
-      currentJob.created_playlist_id = playlistId;
+      job.created_playlist_id = playlistId;
       logDebug(
         `playlist created id=${playlistId}, initial=${initialBatch.length}, remaining=${remainingBatch.length}`
       );
@@ -1434,10 +1443,9 @@
           playlistId,
           remainingBatch,
           (current, total) => {
+            if (epoch !== workflowEpoch || currentJob !== job) return;
             const totalDone = added + current;
-            if (currentJob) {
-              currentJob.transferred_count = totalDone;
-            }
+            job.transferred_count = totalDone;
             const fill = document.getElementById("ytm-transfer-fill");
             const label = document.getElementById("ytm-transfer-label");
             const pct = Math.round((totalDone / videoIds.length) * 100);
@@ -1447,12 +1455,13 @@
             updateNavButtonText();
           }
         );
+        if (epoch !== workflowEpoch || currentJob !== job) return;
         added += res.added;
         failed += res.failed;
       }
 
-      currentJob.transferred_count = added;
-      currentJob.failed_count = failed;
+      job.transferred_count = added;
+      job.failed_count = failed;
       logDebug(`transfer complete: ${added} added, ${failed} failed`);
 
       isTransferActive = false;
@@ -1460,6 +1469,7 @@
       updateNavButtonText();
       renderView();
     } catch (err) {
+      if (epoch !== workflowEpoch || currentJob !== job) return;
       logDebug("transfer execution failed", err.message);
       alert(`Transfer failed: ${err.message}`);
       isTransferActive = false;

@@ -9,6 +9,7 @@ function createRuntime() {
   const events = new Map();
   const storage = new Map();
   const elements = new Map();
+  const intervals = [];
 
   const doc = {
     addEventListener(name, handler) {
@@ -113,10 +114,15 @@ function createRuntime() {
         metadata: null,
       },
     },
-    setInterval() {
-      return 1;
+    setInterval(callback, delay) {
+      const id = intervals.length + 1;
+      intervals.push({ id, callback, delay, cleared: false });
+      return id;
     },
-    clearInterval() {},
+    clearInterval(id) {
+      const interval = intervals.find((item) => item.id === id);
+      if (interval) interval.cleared = true;
+    },
     setTimeout() {
       return 1;
     },
@@ -170,7 +176,7 @@ function createRuntime() {
   };
 
   vm.runInNewContext(source, context);
-  return { context, features };
+  return { context, features, intervals };
 }
 
 test("synced lyrics registers with runtime", () => {
@@ -212,5 +218,19 @@ test("synced lyrics respects auto sync setting and starts cleanly", () => {
 test("synced lyrics probe handles title sanitization and romanization", () => {
   const { context } = createRuntime();
   assert.ok(context);
+});
+
+test("synced lyrics updates its active timing interval without restart", () => {
+  const { context, features, intervals } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+  plugin.start();
+  assert.ok(intervals.some((interval) => interval.delay === 100 && !interval.cleared));
+
+  context.window.__ytmFeatures.config.lyrics_precise_timing = false;
+  plugin.update();
+
+  assert.ok(intervals.some((interval) => interval.delay === 250 && !interval.cleared));
+  assert.ok(intervals.filter((interval) => interval.delay === 100).every((interval) => interval.cleared));
+  plugin.stop();
 });
 

@@ -411,10 +411,11 @@ pub fn resolve_token_or_cookie(token_or_cookie: &str) -> Result<ResolvedCredenti
     if raw.is_empty() {
         return Err("empty token".to_string());
     }
+    if raw.len() > 8 * 1024 {
+        return Err("Spotify credential is too large".to_string());
+    }
 
-    if !raw.starts_with("sp_dc=")
-        && (raw.starts_with("BQ") || raw.len() > 100 || get_user_profile(raw).is_ok())
-    {
+    if !raw.starts_with("sp_dc=") && (raw.starts_with("BQ") || get_user_profile(raw).is_ok()) {
         return Ok(ResolvedCredential {
             access_token: raw.to_string(),
             expires_at_unix: unix_now() + 3600,

@@ -16,7 +16,6 @@ const MAX_REQUEST_SIZE: usize = 512 * 1024;
 pub struct SpotifyBridgeRequest {
     pub id: u64,
     pub action: String,
-    pub token: Option<String>,
     pub link: Option<String>,
     pub raw_text: Option<String>,
     pub playlist_id: Option<String>,
@@ -149,30 +148,6 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
                 ..Default::default()
             };
             send_response(window, req.id, &resp);
-        }
-        "set_token" => {
-            let app = window.app_handle().clone();
-            let controller = state.spotify.clone();
-            let token_str = req.token.unwrap_or_default();
-            let window_clone = window.clone();
-            let req_id = req.id;
-            thread::spawn(move || {
-                let res = controller.handle_captured_token(&app, &token_str);
-                let resp = match res {
-                    Ok(session) => SpotifyBridgeResponse {
-                        ok: true,
-                        is_authenticated: Some(true),
-                        user_name: session.user_name,
-                        ..Default::default()
-                    },
-                    Err(e) => SpotifyBridgeResponse {
-                        ok: false,
-                        error: Some(e),
-                        ..Default::default()
-                    },
-                };
-                send_response(&window_clone, req_id, &resp);
-            });
         }
         "logout" => {
             state.spotify.logout(window.app_handle());
@@ -508,7 +483,11 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
                     .update_transfer_status(&job_id, &status, transferred, failed);
             let resp = SpotifyBridgeResponse {
                 ok: job_opt.is_some(),
-                error: None,
+                error: if job_opt.is_none() {
+                    Some("invalid job status update".to_string())
+                } else {
+                    None
+                },
                 is_authenticated: None,
                 user_name: None,
                 auth_mode: None,
@@ -523,7 +502,14 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
             };
             send_response(window, req.id, &resp);
         }
-        _ => {}
+        _ => {
+            let resp = SpotifyBridgeResponse {
+                ok: false,
+                error: Some("unknown Spotify bridge action".to_string()),
+                ..Default::default()
+            };
+            send_response(window, req.id, &resp);
+        }
     }
 }
 

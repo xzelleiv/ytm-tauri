@@ -1,6 +1,6 @@
 use crate::{controls, settings, updates, AppState};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, thread, time::Duration};
+use std::{collections::HashMap, io::Read, thread, time::Duration};
 use tauri::{Manager, Url, WebviewWindow};
 
 const PREFIX: &str = "YTMFEATURE:";
@@ -67,31 +67,38 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
         "set_setting" => {
             let mut updated_settings = None;
             if let (Some(key), Some(value)) = (&request.key, &request.value) {
-                settings::update(&state.settings, |s| {
-                    apply_setting_update(s, key, value);
+                let applied = settings::update_if(&state.settings, |settings| {
+                    apply_setting_update(settings, key, value)
                 });
-                let snap = settings::snapshot(&state.settings);
-                if key == "discord_rpc" {
-                    state.presence.set_enabled(snap.discord_rpc);
-                } else if key == "spotify_spoof" {
-                    state.presence.set_spotify_spoof(snap.spotify_spoof);
-                } else if key == "ad_block" {
-                    state.adblock.set_enabled(snap.ad_block);
-                } else if key == "launch_at_startup" || key == "start_minimized" {
-                    let _ = crate::platform::set_startup_enabled(
-                        snap.launch_at_startup,
-                        snap.start_minimized,
-                    );
+                if applied {
+                    let snap = settings::snapshot(&state.settings);
+                    if key == "discord_rpc" {
+                        state.presence.set_enabled(snap.discord_rpc);
+                    } else if key == "spotify_spoof" {
+                        state.presence.set_spotify_spoof(snap.spotify_spoof);
+                    } else if key == "ad_block" {
+                        state.adblock.set_enabled(snap.ad_block);
+                    } else if key == "launch_at_startup" || key == "start_minimized" {
+                        let _ = crate::platform::set_startup_enabled(
+                            snap.launch_at_startup,
+                            snap.start_minimized,
+                        );
+                    }
+                    updated_settings = Some(sanitize_settings(snap));
                 }
-                updated_settings = Some(sanitize_settings(snap));
             }
+            let error = if updated_settings.is_none() {
+                Some("invalid setting value".to_string())
+            } else {
+                None
+            };
             let response = FeatureResponse {
                 ok: updated_settings.is_some(),
                 status: Some(if updated_settings.is_some() { 200 } else { 400 }),
                 body: None,
                 headers: HashMap::new(),
                 settings: updated_settings,
-                error: None,
+                error,
             };
             send_response(window, request.id, &response);
         }
@@ -218,7 +225,7 @@ pub fn apply_setting_update(
         }
         "zoom" => {
             if let Some(v) = value.as_f64() {
-                settings.zoom = v;
+                settings.zoom = v.clamp(0.5, 2.0);
                 return true;
             }
         }
@@ -259,7 +266,7 @@ pub fn apply_setting_update(
             }
         }
         "lyrics_line_effect" => {
-            if let Some(v) = value.as_str() {
+            if let Some(v @ ("fancy" | "scale" | "offset" | "focus")) = value.as_str() {
                 settings.lyrics_line_effect = v.to_string();
                 return true;
             }
@@ -303,7 +310,7 @@ pub fn apply_setting_update(
             }
         }
         "output_device" => {
-            if let Some(v) = value.as_str() {
+            if let Some(v) = value.as_str().filter(|value| value.len() <= 512) {
                 settings.output_device = v.to_string();
                 return true;
             }
@@ -315,7 +322,11 @@ pub fn apply_setting_update(
             }
         }
         "equalizer_preset" => {
-            if let Some(v) = value.as_str() {
+            if let Some(
+                v
+                @ ("bass-booster" | "vocal-booster" | "rock" | "electronic" | "acoustic" | "flat"),
+            ) = value.as_str()
+            {
                 settings.equalizer_preset = v.to_string();
                 return true;
             }
@@ -334,7 +345,7 @@ pub fn apply_setting_update(
         }
         "volume_step" => {
             if let Some(v) = value.as_f64() {
-                settings.volume_step = v;
+                settings.volume_step = v.clamp(0.1, 10.0);
                 return true;
             }
         }
@@ -352,7 +363,7 @@ pub fn apply_setting_update(
         }
         "playback_rate" => {
             if let Some(v) = value.as_f64() {
-                settings.playback_rate = v;
+                settings.playback_rate = v.clamp(0.25, 3.0);
                 return true;
             }
         }
@@ -452,7 +463,17 @@ fn parse_request(title: &str) -> Option<FeatureRequest> {
 
 fn execute_request(request: &FeatureRequest) -> FeatureResponse {
     let client = match reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.error("too many redirects");
+            }
+            let target = attempt.url();
+            if target.scheme() == "https" && target.host_str().is_some_and(is_allowed_host) {
+                attempt.follow()
+            } else {
+                attempt.error("redirect target is not allowed")
+            }
+        }))
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(10))
         .user_agent(concat!(
@@ -495,9 +516,22 @@ fn execute_request(request: &FeatureRequest) -> FeatureResponse {
                 .map(|value| (name.as_str().to_string(), value.to_string()))
         })
         .collect();
-    let body = match response.text() {
-        Ok(body) if body.len() <= MAX_RESPONSE_BODY => body,
-        Ok(_) => return error_response("response too large".to_string()),
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BODY as u64)
+    {
+        return error_response("response too large".to_string());
+    }
+    let mut limited = response.take((MAX_RESPONSE_BODY + 1) as u64);
+    let mut body = Vec::with_capacity(16 * 1024);
+    if let Err(error) = limited.read_to_end(&mut body) {
+        return error_response(error.to_string());
+    }
+    if body.len() > MAX_RESPONSE_BODY {
+        return error_response("response too large".to_string());
+    }
+    let body = match String::from_utf8(body) {
+        Ok(body) => body,
         Err(error) => return error_response(error.to_string()),
     };
 
@@ -535,20 +569,13 @@ fn is_allowed_host(host: &str) -> bool {
             | "b-ytmbrowseproxy.zvz.be"
             | "sponsor.ajay.app"
             | "open.spotify.com"
-            | "api.spotify.com"
     )
 }
 
 fn is_allowed_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "accept"
-            | "content-type"
-            | "cookie"
-            | "authority"
-            | "lrclib-client"
-            | "x-user-agent"
-            | "user-agent"
+        "accept" | "content-type" | "lrclib-client" | "x-user-agent" | "user-agent"
     )
 }
 
@@ -561,8 +588,19 @@ mod tests {
         assert!(is_allowed_host("lrclib.net"));
         assert!(is_allowed_host("genius.com"));
         assert!(is_allowed_host("apic-desktop.musixmatch.com"));
+        assert!(is_allowed_host("open.spotify.com"));
+        assert!(!is_allowed_host("api.spotify.com"));
         assert!(!is_allowed_host("example.com"));
         assert!(!is_allowed_host("lrclib.net.example.com"));
+    }
+
+    #[test]
+    fn remote_page_cannot_forward_credentials_through_the_http_bridge() {
+        assert!(is_allowed_header("Accept"));
+        assert!(is_allowed_header("User-Agent"));
+        assert!(!is_allowed_header("Cookie"));
+        assert!(!is_allowed_header("Authorization"));
+        assert!(!is_allowed_header("Authority"));
     }
 
     #[test]
@@ -594,5 +632,26 @@ mod tests {
         let parsed = parse_request(set).expect("set setting");
         assert_eq!(parsed.kind, "set_setting");
         assert_eq!(parsed.key.as_deref(), Some("synced_lyrics"));
+    }
+
+    #[test]
+    fn setting_updates_reject_unknown_enums_and_bound_numbers() {
+        let mut settings = settings::Settings::default();
+        assert!(!apply_setting_update(
+            &mut settings,
+            "lyrics_line_effect",
+            &serde_json::json!("invalid")
+        ));
+        assert!(apply_setting_update(
+            &mut settings,
+            "zoom",
+            &serde_json::json!(99.0)
+        ));
+        assert_eq!(settings.zoom, 2.0);
+        assert!(!apply_setting_update(
+            &mut settings,
+            "unknown_setting",
+            &serde_json::json!(true)
+        ));
     }
 }

@@ -65,6 +65,8 @@
       });
     },
     setSetting(key, value) {
+      const hadPrevious = Object.prototype.hasOwnProperty.call(config, key);
+      const previousValue = config[key];
       config[key] = value;
       for (const name of features.keys()) apply(name);
       try {
@@ -73,10 +75,25 @@
 
       const id = ++requestId;
       const message = { id, kind: "set_setting", key, value };
-      return new Promise((resolve, reject) => {
+      const pending = new Promise((resolve, reject) => {
         queue.push({ id, message, resolve, reject });
         flushQueue();
       });
+      return pending.then(
+        (response) => {
+          if (response?.settings) api.configure(response.settings);
+          return response;
+        },
+        (error) => {
+          if (hadPrevious) config[key] = previousValue;
+          else delete config[key];
+          for (const name of features.keys()) apply(name);
+          try {
+            window.dispatchEvent(new CustomEvent("ytm-settings-changed", { detail: { ...config } }));
+          } catch {}
+          throw error;
+        },
+      );
     },
     triggerAction(action) {
       const id = ++requestId;
@@ -104,13 +121,12 @@
     },
     receive(id, response) {
       const pending = requests.get(id);
-      if (pending) {
-        clearTimeout(pending.timeout);
-        requests.delete(id);
-        releaseTitle(pending);
-        if (response?.error) pending.reject(new Error(response.error));
-        else pending.resolve(response);
-      }
+      if (!pending) return;
+      clearTimeout(pending.timeout);
+      requests.delete(id);
+      releaseTitle(pending);
+      if (response?.error) pending.reject(new Error(response.error));
+      else pending.resolve(response);
       sending = false;
       if (queue.length) {
         setTimeout(flushQueue, 10);

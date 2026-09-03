@@ -172,6 +172,17 @@ test("spotify bridge handles session_connected event emission", () => {
   assert.ok(runtime.window.__ytmSpotify);
 });
 
+test("Spotify credentials never cross the remote page title bridge", () => {
+  assert.doesNotMatch(spotSource, /action:\s*["']set_token["']/);
+  assert.doesNotMatch(spotSource, /sp_dc cookie \/ accessToken/i);
+  assert.doesNotMatch(spotSource, /manual-token/);
+});
+
+test("Spotify Library remains available in the transfer navigation", () => {
+  assert.match(spotSource, /data-tab="library">Spotify Library/);
+  assert.doesNotMatch(spotSource, /<!-- devmode only\s*<button[^>]+data-tab="library"/);
+});
+
 test("ytm transfer adapter passes initial videoIds on createPlaylist", async () => {
   const runtime = createYtmRuntime();
   const adapter = runtime.window.__ytmTransferAdapter;

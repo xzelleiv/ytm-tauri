@@ -95,13 +95,45 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    fn normalize(&mut self) {
+        self.zoom = finite_clamp(self.zoom, 0.5, 2.0, 1.0);
+        self.volume_step = finite_clamp(self.volume_step, 0.1, 10.0, 1.0);
+        self.playback_rate = finite_clamp(self.playback_rate, 0.25, 3.0, 1.0);
+        if !matches!(
+            self.lyrics_line_effect.as_str(),
+            "fancy" | "scale" | "offset" | "focus"
+        ) {
+            self.lyrics_line_effect = "fancy".to_string();
+        }
+        if !matches!(
+            self.equalizer_preset.as_str(),
+            "bass-booster" | "vocal-booster" | "rock" | "electronic" | "acoustic" | "flat"
+        ) {
+            self.equalizer_preset = "bass-booster".to_string();
+        }
+        if self.output_device.len() > 512 {
+            self.output_device = "default".to_string();
+        }
+    }
+}
+
+fn finite_clamp(value: f64, min: f64, max: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback
+    }
+}
+
 pub type SharedSettings = Arc<Mutex<Settings>>;
 
 pub fn load() -> SharedSettings {
-    let settings = settings_path()
+    let mut settings: Settings = settings_path()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|value| serde_json::from_str(&value).ok())
         .unwrap_or_default();
+    settings.normalize();
 
     Arc::new(Mutex::new(settings))
 }
@@ -114,24 +146,35 @@ pub fn snapshot(settings: &SharedSettings) -> Settings {
 }
 
 pub fn update(settings: &SharedSettings, change: impl FnOnce(&mut Settings)) {
+    let _ = update_if(settings, |value| {
+        change(value);
+        true
+    });
+}
+
+pub fn update_if(settings: &SharedSettings, change: impl FnOnce(&mut Settings) -> bool) -> bool {
     let Ok(mut value) = settings.lock() else {
-        return;
+        return false;
     };
 
-    change(&mut value);
+    if !change(&mut value) {
+        return false;
+    }
+    value.normalize();
 
     let Some(path) = settings_path() else {
-        return;
+        return true;
     };
     let Some(parent) = path.parent() else {
-        return;
+        return true;
     };
     let Ok(json) = serde_json::to_string_pretty(&*value) else {
-        return;
+        return true;
     };
 
     let _ = fs::create_dir_all(parent);
     let _ = fs::write(path, json);
+    true
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -171,5 +214,25 @@ mod tests {
         assert_eq!(settings.output_device, "default");
         assert_eq!(settings.equalizer_preset, "bass-booster");
         assert_eq!(settings.playback_rate, 1.0);
+    }
+
+    #[test]
+    fn normalization_bounds_corrupt_or_unsupported_values() {
+        let mut settings = Settings {
+            zoom: -4.0,
+            volume_step: 100.0,
+            playback_rate: 0.01,
+            lyrics_line_effect: "unknown".to_string(),
+            equalizer_preset: "unknown".to_string(),
+            ..Settings::default()
+        };
+
+        settings.normalize();
+
+        assert_eq!(settings.zoom, 0.5);
+        assert_eq!(settings.volume_step, 10.0);
+        assert_eq!(settings.playback_rate, 0.25);
+        assert_eq!(settings.lyrics_line_effect, "fancy");
+        assert_eq!(settings.equalizer_preset, "bass-booster");
     }
 }

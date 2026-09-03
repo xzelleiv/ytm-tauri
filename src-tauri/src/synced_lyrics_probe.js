@@ -9,6 +9,7 @@
   const STYLE_ID = "ytm-tauri-synced-lyrics-style";
   const CONTAINER_ID = "synced-lyrics-container";
   const STAR_KEY = "ytmd-sl-starred-";
+  const CACHE_LIMIT = 40;
   const CACHE = new Map();
 
   let headerObserver = null;
@@ -23,6 +24,9 @@
   let lastCurrentIndex = -1;
   let isUserScrolling = false;
   let userScrollTimeout = 0;
+  let running = false;
+  let boundPlayer = null;
+  let boundMedia = null;
 
   const state = () => CACHE.get(activeTrack?.videoId)?.providers || null;
   const config = () => runtime.config || {};
@@ -849,7 +853,26 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function blankProviderState() {
-    return Object.fromEntries(PROVIDERS.map((name) => [name, { state: "fetching", data: null, error: null }]));
+    return Object.fromEntries(PROVIDERS.map((name) => [name, { state: "idle", data: null, error: null }]));
+  }
+
+  function touchCache(videoId, entry) {
+    CACHE.delete(videoId);
+    CACHE.set(videoId, entry);
+  }
+
+  function pruneCache() {
+    while (CACHE.size > CACHE_LIMIT) {
+      let staleKey = null;
+      for (const key of CACHE.keys()) {
+        if (key !== activeTrack?.videoId) {
+          staleKey = key;
+          break;
+        }
+      }
+      if (!staleKey) return;
+      CACHE.delete(staleKey);
+    }
   }
 
   const REMEMBER_KEY = "ytmd-sl-selected-";
@@ -883,17 +906,19 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
         providers: blankProviderState(),
         selectedProvider: initialProvider,
       };
-      CACHE.set(info.videoId, entry);
+      touchCache(info.videoId, entry);
+      pruneCache();
       currentProvider = initialProvider;
       for (const name of PROVIDERS) fetchProvider(name, info, entry, epoch);
     } else {
+      touchCache(info.videoId, entry);
       if (entry.selectedProvider) {
         currentProvider = entry.selectedProvider;
       }
       // recover aborted fetch
       for (const name of PROVIDERS) {
         const p = entry.providers[name];
-        if (!p || (p.state === "fetching" && !p.data)) {
+        if (!p || p.state === "idle") {
           fetchProvider(name, info, entry, epoch);
         }
       }
@@ -903,13 +928,13 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
   async function fetchProvider(name, info, entry, epoch = currentTrackEpoch) {
     const provider = entry.providers[name];
-    if (provider.state === "done" && provider.data) {
+    if (provider.state === "fetching" || (provider.state === "done" && provider.data)) {
       return;
     }
     provider.state = "fetching";
     provider.data = null;
     provider.error = null;
-    if (epoch === currentTrackEpoch) {
+    if (epoch === currentTrackEpoch && CACHE.get(info.videoId) === entry) {
       render();
     }
     try {
@@ -921,7 +946,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       provider.error = error instanceof Error ? error : new Error(String(error));
     }
     entry.status = PROVIDERS.every((providerName) => entry.providers[providerName].state !== "fetching") ? "done" : "loading";
-    if (epoch === currentTrackEpoch) {
+    if (activeTrack?.videoId === info.videoId && CACHE.get(info.videoId) === entry) {
       if (!entry.selectedProvider || !usable(entry.selectedProvider)) {
         autoPickProvider();
       }
@@ -1013,7 +1038,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   async function directFetchJson(url) {
-    const headers = { "Lrclib-Client": "ytm-tauri/0.2.3 (https://github.com/xzelleiv/ytm-tauri)" };
+    const headers = { "Lrclib-Client": "ytm-tauri/0.2.4 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
       const res = await window.fetch(url, { headers });
       if (res.ok) {
@@ -1361,6 +1386,11 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     return container;
   }
 
+  function onLyricsHeaderClick() {
+    setTimeout(render, 50);
+    setTimeout(render, 300);
+  }
+
   function setupHeaderObserver() {
     const header = getLyricsTabHeader();
     if (!header) return;
@@ -1368,19 +1398,15 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     header.removeAttribute("disabled");
     header.removeAttribute("aria-disabled");
 
-    if (!header.__ytmSlBound) {
-      header.__ytmSlBound = true;
-      header.addEventListener("click", () => {
-        setTimeout(render, 50);
-        setTimeout(render, 300);
-      });
-    }
-
     if (observedHeader !== header) {
       if (headerObserver) {
         headerObserver.disconnect();
       }
+      if (observedHeader) {
+        observedHeader.removeEventListener("click", onLyricsHeaderClick);
+      }
       observedHeader = header;
+      header.addEventListener("click", onLyricsHeaderClick);
       headerObserver = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
           if (mutation.attributeName === "disabled") {
@@ -1465,6 +1491,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function render() {
+    if (!running) return;
     const version = ++renderVersion;
     applyEffect();
     const container = ensureContainer();
@@ -1513,16 +1540,16 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       pickerWrap.style.setProperty("--lyrics-picker-pointer", show ? "auto" : "none");
     };
 
-    container.addEventListener("mousemove", (e) => {
+    container.onmousemove = (e) => {
       const top = container.getBoundingClientRect().top;
       const mouseY = e.clientY - top;
       const isOver = mouseY >= 0 && mouseY <= (picker.offsetHeight || 55) + 12;
       updatePickerVisibility(isOver);
-    }, { passive: true });
+    };
 
-    container.addEventListener("mouseleave", () => {
+    container.onmouseleave = () => {
       updatePickerVisibility(false);
-    }, { passive: true });
+    };
 
     const syncBtn = document.createElement("button");
     syncBtn.type = "button";
@@ -1791,6 +1818,39 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   let trackEventListener = null;
   let navigateListener = null;
 
+  const playerVideoDataListener = () => refreshTrack();
+  const playerEmptiedListener = () => invalidateActiveTrack();
+
+  function bindPlayerListeners() {
+    const player = getPlayer();
+    if (player === boundPlayer) return;
+    if (boundPlayer) {
+      boundPlayer.removeEventListener("videodatachange", playerVideoDataListener);
+      boundPlayer.removeEventListener("emptied", playerEmptiedListener);
+    }
+    boundPlayer = player || null;
+    if (boundPlayer) {
+      boundPlayer.addEventListener("videodatachange", playerVideoDataListener);
+      boundPlayer.addEventListener("emptied", playerEmptiedListener);
+    }
+  }
+
+  function bindMediaListeners() {
+    const media = runtime.media();
+    if (media === boundMedia) return;
+    if (boundMedia) boundMedia.removeEventListener("emptied", invalidateActiveTrack);
+    boundMedia = media || null;
+    if (boundMedia) boundMedia.addEventListener("emptied", invalidateActiveTrack);
+  }
+
+  function restartUpdateInterval() {
+    window.clearInterval(updateInterval);
+    updateInterval = window.setInterval(
+      updateCurrentLine,
+      config().lyrics_precise_timing ? 100 : 250,
+    );
+  }
+
   function invalidateActiveTrack() {
     currentTrackEpoch++;
     isUserScrolling = false;
@@ -1831,24 +1891,18 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function start() {
+    if (running) return;
+    running = true;
     installStyle();
     setupHeaderObserver();
     refreshTrack();
 
-    const player = getPlayer();
-    if (player && !player.__ytmSyncedLyricsBound) {
-      player.__ytmSyncedLyricsBound = true;
-      player.addEventListener("videodatachange", () => refreshTrack());
-      player.addEventListener("emptied", () => invalidateActiveTrack());
-    }
+    bindPlayerListeners();
 
     trackEventListener = (event) => refreshTrack(true, event?.detail);
     window.addEventListener("ytm-track-change", trackEventListener);
 
-    const media = runtime.media();
-    if (media) {
-      media.addEventListener("emptied", invalidateActiveTrack);
-    }
+    bindMediaListeners();
 
     navigateListener = () => {
       setupHeaderObserver();
@@ -1857,25 +1911,25 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     };
     document.addEventListener("yt-navigate-finish", navigateListener);
 
-    updateInterval = window.setInterval(updateCurrentLine, config().lyrics_precise_timing ? 100 : 250);
+    restartUpdateInterval();
     trackPollInterval = window.setInterval(() => {
-      const p = getPlayer();
-      if (p && !p.__ytmSyncedLyricsBound) {
-        p.__ytmSyncedLyricsBound = true;
-        p.addEventListener("videodatachange", () => refreshTrack());
-        p.addEventListener("emptied", () => invalidateActiveTrack());
-      }
+      bindPlayerListeners();
+      bindMediaListeners();
       setupHeaderObserver();
       refreshTrack();
       ensureContainer();
-    }, 500);
+    }, 1500);
 
     render();
   }
 
   function stop() {
+    running = false;
+    currentTrackEpoch++;
+    activeTrack = null;
     if (headerObserver) headerObserver.disconnect();
     headerObserver = null;
+    if (observedHeader) observedHeader.removeEventListener("click", onLyricsHeaderClick);
     observedHeader = null;
     if (trackEventListener) {
       window.removeEventListener("ytm-track-change", trackEventListener);
@@ -1885,18 +1939,26 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       document.removeEventListener("yt-navigate-finish", navigateListener);
       navigateListener = null;
     }
-    const media = runtime.media();
-    if (media) {
-      media.removeEventListener("emptied", invalidateActiveTrack);
+    if (boundPlayer) {
+      boundPlayer.removeEventListener("videodatachange", playerVideoDataListener);
+      boundPlayer.removeEventListener("emptied", playerEmptiedListener);
+      boundPlayer = null;
+    }
+    if (boundMedia) {
+      boundMedia.removeEventListener("emptied", invalidateActiveTrack);
+      boundMedia = null;
     }
     window.clearInterval(updateInterval);
     window.clearInterval(trackPollInterval);
+    updateInterval = 0;
+    trackPollInterval = 0;
     const container = document.getElementById(CONTAINER_ID);
     if (container) container.remove();
   }
 
   function update() {
     setupHeaderObserver();
+    restartUpdateInterval();
     render();
   }
 

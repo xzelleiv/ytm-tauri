@@ -7,6 +7,7 @@ const source = await readFile(new URL("../src-tauri/src/feature_probe.js", impor
 
 function createRuntime(initialTitle = "YouTube Music") {
   let timerId = 0;
+  const timers = [];
   const context = {
     clearTimeout() {},
     console,
@@ -26,13 +27,18 @@ function createRuntime(initialTitle = "YouTube Music") {
       readyState: "complete",
       title: initialTitle,
     },
-    setTimeout() {
+    setTimeout(callback, delay = 0) {
+      timers.push({ callback, delay });
       return ++timerId;
     },
     addEventListener() {},
   };
   context.window = context;
   vm.runInNewContext(source, context);
+  context.runImmediateTimers = () => {
+    const ready = timers.splice(0).filter((timer) => timer.delay <= 10);
+    for (const timer of ready) timer.callback();
+  };
   return context;
 }
 
@@ -84,4 +90,34 @@ test("triggerAction emits action request", async () => {
 
   context.window.__ytmFeatures.receive(request.id, { ok: true });
   await pending;
+});
+
+test("late feature responses cannot release the active request slot", async () => {
+  const context = createRuntime();
+  const first = context.window.__ytmFeatures.getSettings();
+  const firstTitle = context.document.title;
+  const firstRequest = JSON.parse(firstTitle.slice("YTMFEATURE:".length));
+  const second = context.window.__ytmFeatures.triggerAction("check_updates");
+
+  context.window.__ytmFeatures.receive(firstRequest.id + 100, { ok: true });
+  context.runImmediateTimers();
+  assert.equal(context.document.title, firstTitle);
+
+  context.window.__ytmFeatures.receive(firstRequest.id, { ok: true });
+  context.runImmediateTimers();
+  const secondRequest = JSON.parse(context.document.title.slice("YTMFEATURE:".length));
+  context.window.__ytmFeatures.receive(secondRequest.id, { ok: true });
+  await Promise.all([first, second]);
+});
+
+test("rejected setting writes restore the previous runtime value", async () => {
+  const context = createRuntime();
+  context.window.__ytmFeatures.configure({ synced_lyrics: true });
+  const pending = context.window.__ytmFeatures.setSetting("synced_lyrics", false);
+  const request = JSON.parse(context.document.title.slice("YTMFEATURE:".length));
+
+  context.window.__ytmFeatures.receive(request.id, { error: "invalid setting value" });
+
+  await assert.rejects(pending, /invalid setting value/);
+  assert.equal(context.window.__ytmFeatures.config.synced_lyrics, true);
 });

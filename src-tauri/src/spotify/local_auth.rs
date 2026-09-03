@@ -34,6 +34,7 @@ impl BrowserAuthMode {
 pub struct BrowserLogin {
     pub url: String,
     pub mode: BrowserAuthMode,
+    pub generation: u64,
 }
 
 enum ServerMode {
@@ -60,6 +61,7 @@ pub fn start_browser_login(
 ) -> Result<BrowserLogin, String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let generation = controller.begin_auth_attempt();
 
     let (url, mode) = if let Some(client_id) = configured_client_id() {
         let redirect_uri = format!("http://127.0.0.1:{port}/callback");
@@ -88,11 +90,12 @@ pub fn start_browser_login(
         ServerMode::OAuth { .. } => BrowserAuthMode::OAuthPkce,
         ServerMode::Manual { .. } => BrowserAuthMode::ManualCredential,
     };
-    thread::spawn(move || serve(listener, app, controller, mode));
+    thread::spawn(move || serve(listener, app, controller, mode, generation));
 
     Ok(BrowserLogin {
         url,
         mode: auth_mode,
+        generation,
     })
 }
 
@@ -133,14 +136,24 @@ fn build_authorize_url(
     Ok(url.into())
 }
 
-fn serve(listener: TcpListener, app: AppHandle, controller: SpotifyController, mode: ServerMode) {
+fn serve(
+    listener: TcpListener,
+    app: AppHandle,
+    controller: SpotifyController,
+    mode: ServerMode,
+    generation: u64,
+) {
     let _ = listener.set_nonblocking(true);
     let deadline = Instant::now() + AUTH_TIMEOUT;
 
     while Instant::now() < deadline {
+        if !controller.auth_attempt_is_current(generation) {
+            return;
+        }
         match listener.accept() {
             Ok((mut stream, peer)) if peer.ip().is_loopback() => {
-                let should_stop = handle_connection(&mut stream, &app, &controller, &mode);
+                let should_stop =
+                    handle_connection(&mut stream, &app, &controller, &mode, generation);
                 let _ = stream.flush();
                 if should_stop {
                     break;
@@ -153,6 +166,11 @@ fn serve(listener: TcpListener, app: AppHandle, controller: SpotifyController, m
             Err(_) => break,
         }
     }
+
+    if controller.auth_attempt_is_current(generation) {
+        controller.cancel_auth_attempt(generation);
+        super::session::emit_auth_error(&app, "Spotify sign-in timed out. Try again.");
+    }
 }
 
 fn handle_connection(
@@ -160,6 +178,7 @@ fn handle_connection(
     app: &AppHandle,
     controller: &SpotifyController,
     mode: &ServerMode,
+    generation: u64,
 ) -> bool {
     let request = match read_request(stream) {
         Ok(request) => request,
@@ -184,9 +203,10 @@ fn handle_connection(
             redirect_uri,
             verifier,
             state,
+            generation,
         ),
         ServerMode::Manual { nonce } => {
-            handle_manual_request(stream, app, controller, &request, nonce)
+            handle_manual_request(stream, app, controller, &request, nonce, generation)
         }
     }
 }
@@ -201,6 +221,7 @@ fn handle_oauth_callback(
     redirect_uri: &str,
     verifier: &str,
     expected_state: &str,
+    generation: u64,
 ) -> bool {
     if request.method != "GET" {
         write_empty(stream, 405);
@@ -242,8 +263,10 @@ fn handle_oauth_callback(
         return true;
     };
 
-    let result = client::exchange_oauth_code(client_id, code, redirect_uri, verifier)
-        .and_then(|token| controller.handle_oauth_token(app, token, client_id));
+    let result =
+        client::exchange_oauth_code(client_id, code, redirect_uri, verifier).and_then(|token| {
+            controller.handle_oauth_token_for_generation(app, token, client_id, generation)
+        });
     match result {
         Ok(session) => {
             let user_name = session.user_name.as_deref().unwrap_or("Spotify User");
@@ -260,6 +283,7 @@ fn handle_manual_request(
     controller: &SpotifyController,
     request: &HttpRequest,
     expected_nonce: &str,
+    generation: u64,
 ) -> bool {
     if request.method == "GET" && (request.target == "/" || request.target == "/index.html") {
         write_html(stream, 200, &landing_html(expected_nonce));
@@ -298,7 +322,7 @@ fn handle_manual_request(
         return false;
     };
 
-    match controller.handle_captured_token(app, raw_token) {
+    match controller.handle_captured_token_for_generation(app, raw_token, generation) {
         Ok(session) => {
             let user_name = session.user_name.as_deref().unwrap_or("Spotify User");
             write_html(stream, 200, &success_html(user_name));
