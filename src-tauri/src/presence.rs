@@ -21,6 +21,8 @@ use std::{
 const TITLE_PREFIX: &str = "YTMRPC:";
 const CLIENT_ID_ENV: &str = "YT_MUSIC_DISCORD_CLIENT_ID";
 const BUNDLED_CLIENT_ID: &str = include_str!("../discord-client-id.txt");
+const SPOTIFY_ICON_URL: &str =
+    "https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_White.png";
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Clone)]
@@ -435,7 +437,7 @@ fn apply_activity_assets<'a>(
     }
 
     if spotify_spoof {
-        assets = assets.small_image("spotify").small_text("Spotify");
+        assets = assets.small_image(SPOTIFY_ICON_URL).small_text("Spotify");
     }
 
     activity.assets(assets)

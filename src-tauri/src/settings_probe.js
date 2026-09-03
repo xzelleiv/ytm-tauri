@@ -461,7 +461,6 @@
   }
 
   const RESTARTS_REQUIRED = [
-    "spotify_spoof",
     "synced_lyrics",
     "equalizer",
     "custom_output_device",

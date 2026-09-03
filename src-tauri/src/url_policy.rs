@@ -350,7 +350,11 @@ fn is_allowed_track_host(host: &str) -> bool {
 }
 
 fn is_allowed_artwork_host(host: &str) -> bool {
-    host_matches_domain(host, "ytimg.com") || host_matches_domain(host, "googleusercontent.com")
+    host_matches_domain(host, "ytimg.com")
+        || host_matches_domain(host, "googleusercontent.com")
+        || host_matches_domain(host, "googleapis.com")
+        || host_matches_domain(host, "spotifycdn.com")
+        || host_matches_domain(host, "scdn.co")
 }
 
 fn host_matches_domain(host: &str, domain: &str) -> bool {
@@ -513,6 +517,10 @@ mod tests {
         assert_eq!(
             valid_artwork_url(Some("https://lh3.googleusercontent.com/image")),
             Some("https://lh3.googleusercontent.com/image")
+        );
+        assert_eq!(
+            valid_artwork_url(Some("https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_White.png")),
+            Some("https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_White.png")
         );
 
         assert_eq!(valid_artwork_url(Some("https://example.com/image")), None);

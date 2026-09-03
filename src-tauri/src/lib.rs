@@ -362,6 +362,7 @@ pub fn page_feature_config(settings: &settings::Settings) -> String {
         "video_toggle": settings.video_toggle,
         "ambient_mode": settings.ambient_mode,
         "crossfade": settings.crossfade,
+        "spotify_spoof": settings.spotify_spoof,
     })
     .to_string()
 }
