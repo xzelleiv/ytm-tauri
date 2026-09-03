@@ -257,6 +257,18 @@ pub fn is_auth_intermediate_url(url: &Url) -> bool {
             .is_some_and(|q| q.contains("action_handle_signin=true"))
 }
 
+pub fn is_auth_recovery_url(url: &Url) -> bool {
+    if url.scheme() != "https" {
+        return false;
+    }
+    if url.host_str() != Some("music.youtube.com") {
+        return false;
+    }
+    let path = url.path();
+    path.contains("/oops") || path.contains("/error")
+}
+
+
 pub fn is_allowed_spotify_auth_url(url: &Url) -> bool {
     match url.scheme() {
         "about" => url.as_str() == "about:blank",
@@ -523,4 +535,21 @@ mod tests {
             "https://accounts.google.com/signin/v2/identifier"
         )));
     }
+
+    #[test]
+    fn detects_auth_recovery_urls() {
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://music.youtube.com/oops"
+        )));
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://music.youtube.com/error"
+        )));
+        assert!(!is_auth_recovery_url(&parse_url(
+            "https://music.youtube.com/"
+        )));
+        assert!(!is_auth_recovery_url(&parse_url(
+            "https://youtube.com/oops"
+        )));
+    }
 }
+
