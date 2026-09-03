@@ -261,13 +261,31 @@ pub fn is_auth_recovery_url(url: &Url) -> bool {
     if url.scheme() != "https" {
         return false;
     }
-    if url.host_str() != Some("music.youtube.com") {
+    let Some(host) = url.host_str() else {
         return false;
-    }
+    };
     let path = url.path();
-    path.contains("/oops") || path.contains("/error")
-}
 
+    if matches!(
+        host,
+        "music.youtube.com" | "www.youtube.com" | "youtube.com"
+    ) && (path.contains("/oops") || path.contains("/error"))
+    {
+        return true;
+    }
+
+    if host == "accounts.google.com"
+        && (path.contains("/signin/rejected")
+            || path.contains("/info/unknownerror")
+            || url
+                .query()
+                .is_some_and(|q| q.contains("error=disallowed_useragent")))
+    {
+        return true;
+    }
+
+    false
+}
 
 pub fn is_allowed_spotify_auth_url(url: &Url) -> bool {
     match url.scheme() {
@@ -544,12 +562,33 @@ mod tests {
         assert!(is_auth_recovery_url(&parse_url(
             "https://music.youtube.com/error"
         )));
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://www.youtube.com/oops"
+        )));
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://youtube.com/error"
+        )));
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://accounts.google.com/signin/rejected"
+        )));
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://accounts.google.com/info/unknownerror"
+        )));
+        assert!(is_auth_recovery_url(&parse_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?error=disallowed_useragent"
+        )));
+
         assert!(!is_auth_recovery_url(&parse_url(
             "https://music.youtube.com/"
         )));
         assert!(!is_auth_recovery_url(&parse_url(
-            "https://youtube.com/oops"
+            "https://www.youtube.com/watch?v=123"
+        )));
+        assert!(!is_auth_recovery_url(&parse_url(
+            "https://accounts.google.com/signin/v2/identifier"
+        )));
+        assert!(!is_auth_recovery_url(&parse_url(
+            "https://accounts.google.com/AccountChooser"
         )));
     }
 }
-

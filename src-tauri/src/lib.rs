@@ -180,9 +180,20 @@ pub fn run() {
                 .initialization_script(initialization_script(&initial))
                 .on_navigation(move |url| {
                     if url_policy::is_auth_recovery_url(url) {
-                        if let Some(window) = app_for_navigation.get_webview_window("main") {
-                            if let Ok(target) = Url::parse(YOUTUBE_MUSIC_URL) {
-                                let _ = window.navigate(target);
+                        static LAST_RECOVERY: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        if now.saturating_sub(
+                            LAST_RECOVERY.swap(now, std::sync::atomic::Ordering::Relaxed),
+                        ) >= 3
+                        {
+                            if let Some(window) = app_for_navigation.get_webview_window("main") {
+                                if let Ok(target) = Url::parse(YOUTUBE_MUSIC_URL) {
+                                    let _ = window.navigate(target);
+                                }
                             }
                         }
                         return false;
