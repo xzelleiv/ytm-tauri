@@ -204,3 +204,62 @@ test("ytm transfer adapter passes initial videoIds on createPlaylist", async () 
   assert.deepEqual(capturedPayload.videoIds, initialIds);
 });
 
+test("getSortedReviewTracks correctly orders by review, confident, and original", async () => {
+  const spotUpdated = await readFile(
+    new URL("../src-tauri/src/spotify_transfer_probe.js", import.meta.url),
+    "utf8"
+  );
+  const context = {
+    clearTimeout() {},
+    console,
+    Date,
+    location: { hostname: "music.youtube.com" },
+    document: {
+      addEventListener() {},
+      head: { appendChild() {} },
+      body: { appendChild() {} },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      createElement() { return {}; },
+      getElementById() { return null; },
+      readyState: "complete",
+      title: "YouTube Music",
+    },
+    setTimeout() { return 1; },
+  };
+  context.window = context;
+  vm.runInNewContext(spotUpdated, context);
+
+  const sortFn = context.window.__ytmSpotify.getSortedReviewTracks;
+  assert.ok(typeof sortFn === "function");
+
+  const sampleTracks = [
+    { originalIndex: 0, source: { title: "Track 1" }, match_type: "high", selected_candidate: { score: 1.0, confidence: "high" } },
+    { originalIndex: 1, source: { title: "Track 2" }, match_type: "review", selected_candidate: { score: 0.81, confidence: "review" } },
+    { originalIndex: 2, source: { title: "Track 3" }, match_type: "high", selected_candidate: { score: 0.92, confidence: "high" } },
+    { originalIndex: 3, source: { title: "Track 4" }, match_type: "unmatched", selected_candidate: null },
+    { originalIndex: 4, source: { title: "Track 5" }, match_type: "review", selected_candidate: { score: 0.65, confidence: "review" } },
+  ];
+
+  // review sort: unmatched (Track 4) -> review 0.65 (Track 5) -> review 0.81 (Track 2) -> high 0.92 (Track 3) -> high 1.0 (Track 1)
+  const reviewSorted = sortFn(sampleTracks, "review");
+  assert.deepEqual(
+    reviewSorted.map((t) => t.originalIndex),
+    [3, 4, 1, 2, 0]
+  );
+
+  // confident sort: high 1.0 (Track 1) -> high 0.92 (Track 3) -> review 0.81 (Track 2) -> review 0.65 (Track 5) -> unmatched (Track 4)
+  const confidentSorted = sortFn(sampleTracks, "confident");
+  assert.deepEqual(
+    confidentSorted.map((t) => t.originalIndex),
+    [0, 2, 1, 4, 3]
+  );
+
+  // original sort: 0, 1, 2, 3, 4
+  const originalSorted = sortFn(sampleTracks, "original");
+  assert.deepEqual(
+    originalSorted.map((t) => t.originalIndex),
+    [0, 1, 2, 3, 4]
+  );
+});
+

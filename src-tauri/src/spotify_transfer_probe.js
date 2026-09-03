@@ -7,6 +7,7 @@
   const requests = new Map();
   const queue = [];
   const debugLogs = [];
+  const matchingLogs = [];
   let requestId = 0;
   let sending = false;
   let currentJob = null;
@@ -19,6 +20,7 @@
   let userPlaylists = [];
   let modalRoot = null;
   let reviewPage = 0;
+  let reviewSortOrder = "review";
   const REVIEW_PAGE_SIZE = 50;
   let isMatchingActive = false;
   let isTransferActive = false;
@@ -36,6 +38,19 @@
     if (el) {
       el.textContent = debugLogs.join("\n");
       el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  function appendMatchingLog(line) {
+    matchingLogs.push(line);
+    if (matchingLogs.length > 250) matchingLogs.shift();
+    const term = document.getElementById("ytm-matching-terminal");
+    if (term) {
+      const lineEl = document.createElement("div");
+      lineEl.className = "ytm-spot-terminal-line";
+      lineEl.textContent = line;
+      term.appendChild(lineEl);
+      term.scrollTop = term.scrollHeight;
     }
   }
 
@@ -117,6 +132,7 @@
         renderView();
       }
     },
+    getSortedReviewTracks,
   };
 
   window.__ytmSpotify = bridge;
@@ -357,6 +373,33 @@
         background: #1db954;
         width: 0%;
         transition: width 0.2s ease;
+      }
+      .ytm-spot-terminal {
+        background: #000000;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-family: Consolas, Menlo, Monaco, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #ffffff;
+        text-align: left;
+        width: 100%;
+        max-width: 760px;
+        box-sizing: border-box;
+        margin: 14px auto 0 auto;
+        flex: 1;
+        min-height: 220px;
+        max-height: 380px;
+        overflow-y: auto;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
+        user-select: text;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .ytm-spot-terminal-line {
+        color: #ffffff;
+        font-family: inherit;
       }
       .ytm-spot-table {
         width: 100%;
@@ -1115,12 +1158,16 @@
       tracks: sourceTracks.length,
     });
 
+    matchingLogs.length = 0;
+    appendMatchingLog(`Ready. Matching ${sourceTracks.length} tracks against YouTube Music...`);
+
     currentJob = {
       id: "job_" + Date.now(),
       playlist_title: playlistTitle,
       playlist_description: playlistDesc,
       tracks: sourceTracks.map((t, idx) => ({
         index: idx,
+        originalIndex: idx,
         source: t,
         selected_candidate: null,
         match_type: "unmatched",
@@ -1138,6 +1185,7 @@
 
     activeView = "matching";
     reviewPage = 0;
+    reviewSortOrder = "review";
     isMatchingActive = true;
     updateNavButtonText();
     renderView();
@@ -1151,6 +1199,9 @@
     for (let i = 0; i < tracks.length; i++) {
       if (!isMatchingActive || currentJob !== job || epoch !== workflowEpoch) return;
       const t = tracks[i].source;
+      const artistStr = (t.artists || []).join(", ") || "Unknown Artist";
+      appendMatchingLog(`[${i + 1}/${tracks.length}] ${artistStr} - ${t.title}`);
+
       let rawCandidates = [];
       try {
         rawCandidates = await window.__ytmTransferAdapter.searchSongs(t.title, t.artists);
@@ -1166,12 +1217,17 @@
       if (scored.length && scored[0].confidence === "high") {
         tracks[i].selected_candidate = scored[0];
         tracks[i].match_type = "high";
+        const candArtist = (scored[0].artists || []).join(", ") || "Unknown";
+        appendMatchingLog(`  -> Matched: ${candArtist} - ${scored[0].title} (${Math.round(scored[0].score * 100)}%)`);
       } else if (scored.length && scored[0].confidence === "review") {
         tracks[i].selected_candidate = scored[0];
         tracks[i].match_type = "review";
+        const candArtist = (scored[0].artists || []).join(", ") || "Unknown";
+        appendMatchingLog(`  -> Review: ${candArtist} - ${scored[0].title} (${Math.round(scored[0].score * 100)}%)`);
       } else {
         tracks[i].selected_candidate = scored[0] || null;
         tracks[i].match_type = "unmatched";
+        appendMatchingLog(`  -> No match found`);
       }
 
       job.progress.current = i + 1;
@@ -1184,6 +1240,7 @@
     }
 
     if (isMatchingActive && currentJob === job && epoch === workflowEpoch) {
+      appendMatchingLog(`Matching complete. Transitioning to review...`);
       isMatchingActive = false;
       activeView = "review";
       updateNavButtonText();
@@ -1213,18 +1270,28 @@
 
   function renderMatching(container) {
     container.innerHTML = `
-      <div style="text-align:center; padding:40px 10px;">
-        <h3 style="margin-top:0;">Finding Best Matches on YouTube Music</h3>
+      <div style="text-align:center; padding:10px 0; display:flex; flex-direction:column; flex:1; min-height:0; box-sizing:border-box; width:100%;">
+        <h3 style="margin-top:0; margin-bottom:6px;">Finding Best Matches on YouTube Music</h3>
         <div id="ytm-matching-label" style="font-size:14px; color:#aaa; margin-bottom:8px;">Starting search...</div>
-        <div class="ytm-spot-progress-bar">
+        <div class="ytm-spot-progress-bar" style="width:100%; max-width:760px; margin:8px auto 0 auto;">
           <div id="ytm-matching-fill" class="ytm-spot-progress-fill"></div>
         </div>
-        <div id="ytm-matching-counts" style="margin-top:12px; font-size:13px;"></div>
-        <div style="margin-top:28px;">
+        <div id="ytm-matching-counts" style="margin-top:10px; font-size:13px;"></div>
+        <div id="ytm-matching-terminal" class="ytm-spot-terminal">
+          ${matchingLogs.map((l) => `<div class="ytm-spot-terminal-line">${escapeHtml(l)}</div>`).join("")}
+        </div>
+        <div style="margin-top:16px;">
           <button id="ytm-spot-cancel-match" class="ytm-spot-btn">Cancel</button>
         </div>
       </div>
     `;
+
+    updateMatchingProgress();
+
+    const term = document.getElementById("ytm-matching-terminal");
+    if (term) {
+      term.scrollTop = term.scrollHeight;
+    }
 
     document.getElementById("ytm-spot-cancel-match").onclick = () => {
       workflowEpoch += 1;
@@ -1236,18 +1303,60 @@
     };
   }
 
+  function getSortedReviewTracks(tracks, sortOrder) {
+    const list = (tracks || []).slice();
+    if (sortOrder === "confident") {
+      return list.sort((a, b) => {
+        const confRank = (t) => {
+          if (t.match_type === "high" || t.selected_candidate?.confidence === "high") return 0;
+          if (t.match_type === "review" || t.selected_candidate?.confidence === "review") return 1;
+          return 2;
+        };
+        const rankDiff = confRank(a) - confRank(b);
+        if (rankDiff !== 0) return rankDiff;
+        const scoreA = a.selected_candidate?.score || 0;
+        const scoreB = b.selected_candidate?.score || 0;
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        return (a.originalIndex ?? 0) - (b.originalIndex ?? 0);
+      });
+    }
+
+    if (sortOrder === "original") {
+      return list.sort((a, b) => (a.originalIndex ?? 0) - (b.originalIndex ?? 0));
+    }
+
+    return list.sort((a, b) => {
+      const reviewRank = (t) => {
+        if (t.match_type === "unmatched" || !t.selected_candidate) return 0;
+        if (t.match_type === "review" || t.selected_candidate?.confidence === "review") return 1;
+        return 2;
+      };
+      const rankDiff = reviewRank(a) - reviewRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      const scoreA = a.selected_candidate?.score || 0;
+      const scoreB = b.selected_candidate?.score || 0;
+      if (scoreA !== scoreB) return scoreA - scoreB;
+      return (a.originalIndex ?? 0) - (b.originalIndex ?? 0);
+    });
+  }
+
   function renderReview(container) {
     if (!currentJob) return;
 
-    const allTracks = currentJob.tracks || [];
+    const existingTitle = document.getElementById("ytm-dest-title")?.value;
+    if (existingTitle !== undefined) currentJob.playlist_title = existingTitle;
+    const existingPrivacy = document.getElementById("ytm-dest-privacy")?.value;
+    if (existingPrivacy !== undefined) currentJob.privacy = existingPrivacy;
+
+    const allTracks = getSortedReviewTracks(currentJob.tracks || [], reviewSortOrder);
     const total = allTracks.length;
     const maxPages = Math.ceil(total / REVIEW_PAGE_SIZE) || 1;
     const startIndex = reviewPage * REVIEW_PAGE_SIZE;
     const pageTracks = allTracks.slice(startIndex, startIndex + REVIEW_PAGE_SIZE);
 
     const rowsHtml = pageTracks
-      .map((t, localIdx) => {
-        const globalIdx = startIndex + localIdx;
+      .map((t) => {
+        const origIdx = t.originalIndex ?? 0;
         const s = t.source;
         const cand = t.selected_candidate;
         let pillClass = "ytm-spot-pill-low";
@@ -1268,7 +1377,7 @@
 
         return `
           <tr style="${isSkipped ? "opacity:0.35;" : ""}">
-            <td>${globalIdx + 1}</td>
+            <td>${origIdx + 1}</td>
             <td>
               <strong>${escapeHtml(s.title)}</strong><br/>
               <span style="color:#888; font-size:12px;">${escapeHtml((s.artists || []).join(", "))}</span>
@@ -1286,7 +1395,7 @@
               <span class="ytm-spot-pill ${pillClass}">${pillText}</span>
             </td>
             <td>
-              <button class="ytm-spot-btn ytm-spot-skip-btn" data-idx="${globalIdx}" style="padding:3px 8px; font-size:11px;">
+              <button class="ytm-spot-btn ytm-spot-skip-btn" data-idx="${origIdx}" style="padding:3px 8px; font-size:11px;">
                 ${isSkipped ? "Include" : "Skip"}
               </button>
             </td>
@@ -1294,6 +1403,8 @@
         `;
       })
       .join("");
+
+    const activePrivacy = currentJob.privacy || "PRIVATE";
 
     container.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -1308,11 +1419,16 @@
       </div>
 
       <div class="ytm-spot-section" style="display:flex; gap:12px; align-items:center; padding:10px 14px; margin-bottom:10px;">
-        <input id="ytm-dest-title" class="ytm-spot-input" value="${escapeHtml(currentJob.playlist_title)}" placeholder="Destination Playlist Title" />
+        <input id="ytm-dest-title" class="ytm-spot-input" value="${escapeHtml(currentJob.playlist_title)}" placeholder="Destination Playlist Title" style="flex:1;" />
+        <select id="ytm-review-sort" class="ytm-spot-input" style="width:180px;">
+          <option value="review" ${reviewSortOrder === "review" ? "selected" : ""}>Needs Review First</option>
+          <option value="confident" ${reviewSortOrder === "confident" ? "selected" : ""}>Confident Matches First</option>
+          <option value="original" ${reviewSortOrder === "original" ? "selected" : ""}>Original Track Order</option>
+        </select>
         <select id="ytm-dest-privacy" class="ytm-spot-input" style="width:130px;">
-          <option value="PRIVATE" selected>Private</option>
-          <option value="UNLISTED">Unlisted</option>
-          <option value="PUBLIC">Public</option>
+          <option value="PRIVATE" ${activePrivacy === "PRIVATE" ? "selected" : ""}>Private</option>
+          <option value="UNLISTED" ${activePrivacy === "UNLISTED" ? "selected" : ""}>Unlisted</option>
+          <option value="PUBLIC" ${activePrivacy === "PUBLIC" ? "selected" : ""}>Public</option>
         </select>
       </div>
 
@@ -1367,6 +1483,15 @@
       executeTransfer(title, privacy);
     };
 
+    const sortEl = document.getElementById("ytm-review-sort");
+    if (sortEl) {
+      sortEl.onchange = (e) => {
+        reviewSortOrder = e.target.value;
+        reviewPage = 0;
+        renderReview(container);
+      };
+    }
+
     const prevBtn = document.getElementById("ytm-prev-page");
     if (prevBtn && reviewPage > 0) {
       prevBtn.onclick = () => {
@@ -1404,9 +1529,10 @@
     renderView();
 
     try {
-      const validTracks = (job.tracks || []).filter(
-        (t) => t.status !== "skipped" && t.selected_candidate?.video_id
-      );
+      const validTracks = (job.tracks || [])
+        .slice()
+        .sort((a, b) => (a.originalIndex ?? 0) - (b.originalIndex ?? 0))
+        .filter((t) => t.status !== "skipped" && t.selected_candidate?.video_id);
       const videoIds = validTracks.map((t) => t.selected_candidate.video_id);
 
       if (!videoIds.length) {
