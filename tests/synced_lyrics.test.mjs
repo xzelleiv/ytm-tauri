@@ -146,6 +146,16 @@ function createRuntime() {
     },
     URL,
     URLSearchParams,
+    AbortController: globalThis.AbortController,
+    ResizeObserver: class {
+      observe() {}
+      disconnect() {}
+    },
+    requestAnimationFrame(fn) {
+      if (typeof fn === "function") fn();
+      return 1;
+    },
+    cancelAnimationFrame() {},
     MutationObserver: class {
       observe() {}
       disconnect() {}
@@ -291,4 +301,70 @@ test("fetchLrcLib aborts execution when track epoch changes", async () => {
   const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 999);
   assert.equal(res, null);
 });
+
+test("parseLrc parses flexible timestamps and strips inline section headers", () => {
+  const { features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+  assert.equal(typeof plugin.parseLrc, "function");
+
+  const lrc = [
+    "[re:LRCLIB]",
+    "[00:10,50][Verse 1] Comma decimal",
+    "[00:20.123][Chorus] Three digit millis",
+    "[00:30] Integer seconds",
+    "[00:40:50] Colon subseconds",
+  ].join("\n");
+
+  const parsed = plugin.parseLrc(lrc);
+  assert.equal(parsed.lines.length, 5);
+  assert.equal(parsed.lines[1].timeInMs, 10500);
+  assert.equal(parsed.lines[1].text, "Comma decimal");
+  assert.equal(parsed.lines[2].timeInMs, 20123);
+  assert.equal(parsed.lines[2].text, "Three digit millis");
+  assert.equal(parsed.lines[3].timeInMs, 30000);
+  assert.equal(parsed.lines[3].text, "Integer seconds");
+  assert.equal(parsed.lines[4].timeInMs, 40500);
+  assert.equal(parsed.lines[4].text, "Colon subseconds");
+});
+
+test("renderPlain sanitizes metadata headers and leading timestamps", () => {
+  const { context, features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+  assert.equal(typeof plugin.renderPlain, "function");
+
+  const target = context.document.createElement("div");
+  const rawPlain = [
+    "[ar:Test Artist]",
+    "[ti:Test Song]",
+    "[00:05.10]First line of song",
+    "[00:10]Second line of song",
+    "[re:LRCLIB]",
+  ].join("\n");
+
+  plugin.renderPlain(target, rawPlain);
+  assert.equal(target.children.length, 2);
+  const firstText = target.children[0].children[0].children[0].children[0].textContent;
+  const secondText = target.children[1].children[0].children[0].children[0].textContent;
+  assert.equal(firstText, "First line of song");
+  assert.equal(secondText, "Second line of song");
+});
+
+test("fetchLrcLib aborts immediately when signal is aborted", async () => {
+  let fetchCalled = false;
+  const { context, features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+
+  context.fetch = async () => {
+    fetchCalled = true;
+    return { ok: false };
+  };
+
+  const controller = new context.AbortController();
+  controller.abort();
+
+  const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 0, controller.signal);
+  assert.equal(res, null);
+  assert.equal(fetchCalled, false);
+});
+
 

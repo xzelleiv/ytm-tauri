@@ -18,6 +18,12 @@
   let trackPollInterval = 0;
   let activeTrack = null;
   let currentTrackEpoch = 0;
+  let currentAbortController = null;
+  let currentLineElements = [];
+  let currentLineOffsets = null;
+  let cachedContainerHeight = 0;
+  let resizeObserver = null;
+  let scrollRafId = 0;
   let currentProvider = PROVIDERS[0];
   let manuallySwitched = false;
   let renderVersion = 0;
@@ -895,7 +901,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     } catch {}
   }
 
-  function ensureTrack(info, epoch = currentTrackEpoch) {
+  function ensureTrack(info, epoch = currentTrackEpoch, signal = null) {
     let entry = CACHE.get(info.videoId);
     if (!entry) {
       const starred = readStarred(info.videoId);
@@ -909,7 +915,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       touchCache(info.videoId, entry);
       pruneCache();
       currentProvider = initialProvider;
-      for (const name of PROVIDERS) fetchProvider(name, info, entry, epoch);
+      for (const name of PROVIDERS) fetchProvider(name, info, entry, epoch, signal);
     } else {
       touchCache(info.videoId, entry);
       if (entry.selectedProvider) {
@@ -919,14 +925,14 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       for (const name of PROVIDERS) {
         const p = entry.providers[name];
         if (!p || p.state === "idle") {
-          fetchProvider(name, info, entry, epoch);
+          fetchProvider(name, info, entry, epoch, signal);
         }
       }
     }
     return entry;
   }
 
-  async function fetchProvider(name, info, entry, epoch = currentTrackEpoch) {
+  async function fetchProvider(name, info, entry, epoch = currentTrackEpoch, signal = null) {
     const provider = entry.providers[name];
     if (provider.state === "fetching" || (provider.state === "done" && provider.data)) {
       return;
@@ -938,10 +944,22 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       render();
     }
     try {
-      const data = await providerSearch(name, info, epoch);
+      const data = await providerSearch(name, info, epoch, signal);
+      if (signal?.aborted || epoch !== currentTrackEpoch) {
+        // abort cleanup
+        provider.state = "idle";
+        provider.data = null;
+        return;
+      }
       provider.state = "done";
       provider.data = data;
     } catch (error) {
+      if (error?.name === "AbortError" || signal?.aborted || epoch !== currentTrackEpoch) {
+        // abort cleanup
+        provider.state = "idle";
+        provider.data = null;
+        return;
+      }
       provider.state = "error";
       provider.error = error instanceof Error ? error : new Error(String(error));
     }
@@ -1044,21 +1062,24 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     return 60;
   }
 
-  function providerSearch(name, info, epoch = currentTrackEpoch) {
+  function providerSearch(name, info, epoch = currentTrackEpoch, signal = null) {
     switch (name) {
-      case "YTMusic": return fetchYtmLyrics(info);
-      case "LRCLib": return fetchLrcLib(info, epoch);
+      case "YTMusic": return fetchYtmLyrics(info, epoch, signal);
+      case "LRCLib": return fetchLrcLib(info, epoch, signal);
       default: return Promise.resolve(null);
     }
   }
 
-  async function directFetchJson(url) {
+  async function directFetchJson(url, signal = null) {
+    if (signal?.aborted) {
+      return null;
+    }
     if (Date.now() < lrclibBlockedUntil) {
       return null;
     }
     const headers = { "Lrclib-Client": "ytm-tauri/0.2.4 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
-      const res = await window.fetch(url, { headers });
+      const res = await window.fetch(url, { headers, signal });
       if (res.status === 429) {
         const retryAfter = parseRetryAfter(res.headers?.get?.("retry-after"));
         lrclibBlockedUntil = Date.now() + retryAfter * 1000;
@@ -1069,6 +1090,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       }
     } catch {
       // network fallback
+    }
+    if (signal?.aborted) {
+      return null;
     }
     if (Date.now() < lrclibBlockedUntil) {
       return null;
@@ -1139,8 +1163,8 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     return score;
   }
 
-  async function fetchLrcLib(info, epoch = currentTrackEpoch) {
-    if (epoch !== currentTrackEpoch || Date.now() < lrclibBlockedUntil) {
+  async function fetchLrcLib(info, epoch = currentTrackEpoch, signal = null) {
+    if (epoch !== currentTrackEpoch || signal?.aborted || Date.now() < lrclibBlockedUntil) {
       return null;
     }
     const cleanTitle = cleanSongTitle(info.title);
@@ -1156,8 +1180,8 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       if (info.songDuration > 0) getParams.set("duration", String(Math.round(info.songDuration)));
 
       const getUrl = `https://lrclib.net/api/get?${getParams.toString()}`;
-      const exact = await directFetchJson(getUrl);
-      if (epoch !== currentTrackEpoch) return null;
+      const exact = await directFetchJson(getUrl, signal);
+      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
       if (exact && typeof exact === "object" && !Array.isArray(exact)) {
         if (!exact.instrumental && (exact.syncedLyrics || exact.plainLyrics)) {
           const score = scoreCandidate(exact.artistName, exact.trackName, exact.duration || 0, info);
@@ -1178,9 +1202,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     // structured clean query
     if (cleanTitle) {
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       await sleep(250);
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       const query = new URLSearchParams({
         artist_name: cleanArt || info.artist,
         track_name: cleanTitle,
@@ -1189,8 +1213,8 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
         query.set("album_name", info.album);
       }
       const url = `https://lrclib.net/api/search?${query.toString()}`;
-      const res = await directFetchJson(url);
-      if (epoch !== currentTrackEpoch) return null;
+      const res = await directFetchJson(url, signal);
+      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
       if (Array.isArray(res) && res.length > 0) {
         data = res;
       }
@@ -1198,16 +1222,16 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     // structured raw query
     if (!data.length && info.title) {
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       await sleep(250);
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       const query = new URLSearchParams({
         artist_name: info.artist,
         track_name: info.title,
       });
       const url = `https://lrclib.net/api/search?${query.toString()}`;
-      const res = await directFetchJson(url);
-      if (epoch !== currentTrackEpoch) return null;
+      const res = await directFetchJson(url, signal);
+      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
       if (Array.isArray(res) && res.length > 0) {
         data = res;
       }
@@ -1215,20 +1239,20 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     // fallback query
     if (!data.length) {
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       await sleep(250);
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch) return null;
+      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       const q = `${cleanArt || info.artist} ${cleanTitle || info.title}`.trim();
       const query = new URLSearchParams({ q });
       const url = `https://lrclib.net/api/search?${query.toString()}`;
-      const res = await directFetchJson(url);
-      if (epoch !== currentTrackEpoch) return null;
+      const res = await directFetchJson(url, signal);
+      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
       if (Array.isArray(res) && res.length > 0) {
         data = res;
       }
     }
 
-    if (!data.length || epoch !== currentTrackEpoch) return null;
+    if (!data.length || epoch !== currentTrackEpoch || signal?.aborted) return null;
 
     const scored = data
       .filter((item) => !item.instrumental && (item.syncedLyrics || item.plainLyrics))
@@ -1254,11 +1278,13 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     };
   }
 
-  async function fetchYtmLyrics(info) {
+  async function fetchYtmLyrics(info, epoch = currentTrackEpoch, signal = null) {
+    if (epoch !== currentTrackEpoch || signal?.aborted) return null;
     const app = runtime.app();
     const manager = app?.networkManager;
     if (!manager?.fetch) return null;
     const data = await manager.fetch("/next?prettyPrint=false", { videoId: info.videoId });
+    if (epoch !== currentTrackEpoch || signal?.aborted) return null;
     const tabs = data?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer?.watchNextTabbedResultsRenderer?.tabs;
     if (!Array.isArray(tabs)) return null;
     const tab = tabs.find((item) => item?.tabRenderer?.endpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType === "MUSIC_PAGE_TYPE_TRACK_LYRICS");
@@ -1269,6 +1295,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ browseId, context: { client: { clientName: "26", clientVersion: "7.01.05" } } }),
     });
+    if (epoch !== currentTrackEpoch || signal?.aborted) return null;
     if (!response?.ok || !response.body) return null;
     const browse = JSON.parse(response.body);
     const contents = browse?.contents;
@@ -1311,9 +1338,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     const lines = [];
     const tags = [];
     let offset = 0;
-    const timestampRegex = /^\[(?<minutes>\d+):(?<seconds>\d+)\.(?<centiseconds>\d+)\]/m;
+    const timestampRegex = /^\[(?<minutes>\d+):(?<seconds>\d+)(?:[.,:](?<subseconds>\d+))?\]/m;
     const tagRegex = /^\[(?<tag>\w+):\s*(?<value>.+?)\s*\]$/;
-    const wordRegex = /<(?<minutes>\d+):(?<seconds>\d+)\.(?<centiseconds>\d+)>\s*(?<word>\S+)/g;
+    const wordRegex = /<(?<minutes>\d+):(?<seconds>\d+)(?:[.,:](?<subseconds>\d+))?>\s*(?<word>\S+)/g;
 
     for (let raw of String(text || "").split("\n")) {
       raw = raw.trim();
@@ -1321,13 +1348,16 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       const timestamps = [];
       let match;
       while ((match = raw.match(timestampRegex)?.groups)) {
-        const { minutes, seconds, centiseconds } = match;
+        const { minutes, seconds, subseconds } = match;
+        const fractionMs = subseconds
+          ? parseInt(subseconds.slice(0, 3).padEnd(3, "0"), 10)
+          : 0;
         const timeInMs =
           parseInt(minutes, 10) * 60 * 1000 +
           parseInt(seconds, 10) * 1000 +
-          parseInt(centiseconds.padEnd(3, "0"), 10);
+          fractionMs;
         timestamps.push({
-          time: `${minutes}:${seconds}.${centiseconds}`,
+          time: `${minutes}:${seconds}.${subseconds || "00"}`,
           timeInMs,
         });
         raw = raw.replace(timestampRegex, "");
@@ -1344,17 +1374,22 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
       let lineText = raw.trim();
       const words = Array.from(lineText.matchAll(wordRegex), ({ groups }) => {
-        const { minutes, seconds, centiseconds, word } = groups;
+        const { minutes, seconds, subseconds, word } = groups;
+        const fractionMs = subseconds
+          ? parseInt(subseconds.slice(0, 3).padEnd(3, "0"), 10)
+          : 0;
         const timeInMs =
           parseInt(minutes, 10) * 60 * 1000 +
           parseInt(seconds, 10) * 1000 +
-          parseInt(centiseconds.padEnd(3, "0"), 10);
+          fractionMs;
         return { timeInMs, word };
       });
 
       if (words.length) {
         lineText = words.map(({ word }) => word).join(" ");
       }
+
+      lineText = lineText.replace(/^\[(verse|chorus|bridge|intro|outro|hook|interlude)[^\]]*\]\s*/i, "");
 
       for (const { time, timeInMs } of timestamps) {
         lines.push({
@@ -1481,21 +1516,31 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   function scrollToLineIndex(index, behavior = "smooth") {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
-    const lines = container.querySelectorAll(".synced-line");
-    if (index >= 0 && lines[index]) {
-      const vlist = container.querySelector(".synced-lyrics-vlist");
-      if (vlist) {
-        const target = lines[index];
-        const top = target.offsetTop - vlist.clientHeight * 0.38;
-        isProgrammaticScroll = true;
-        if (programmaticScrollTimer) window.clearTimeout(programmaticScrollTimer);
-        const actualBehavior = isInitialTrackScroll ? "instant" : behavior;
-        isInitialTrackScroll = false;
-        vlist.scrollTo({ top: Math.max(0, top), behavior: actualBehavior });
-        programmaticScrollTimer = window.setTimeout(() => {
-          isProgrammaticScroll = false;
-        }, 400);
+    const vlist = container.querySelector(".synced-lyrics-vlist");
+    if (!vlist) return;
+
+    const lineCount = currentLineElements.length;
+    if (index >= 0 && index < lineCount) {
+      let targetTop = 0;
+      if (currentLineOffsets && currentLineOffsets.length > index) {
+        targetTop = currentLineOffsets[index];
+      } else {
+        targetTop = currentLineElements[index]?.offsetTop || 0;
       }
+      const cHeight = cachedContainerHeight || vlist.clientHeight || 400;
+      const top = targetTop - cHeight * 0.38;
+      isProgrammaticScroll = true;
+      if (programmaticScrollTimer) window.clearTimeout(programmaticScrollTimer);
+      const actualBehavior = isInitialTrackScroll ? "instant" : behavior;
+      isInitialTrackScroll = false;
+      if (typeof vlist.scrollTo === "function") {
+        vlist.scrollTo({ top: Math.max(0, top), behavior: actualBehavior });
+      } else {
+        vlist.scrollTop = Math.max(0, top);
+      }
+      programmaticScrollTimer = window.setTimeout(() => {
+        isProgrammaticScroll = false;
+      }, 400);
     }
   }
 
@@ -1544,6 +1589,17 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
   function render() {
     if (!running) return;
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+      resizeObserver = null;
+    }
+    if (scrollRafId) {
+      window.cancelAnimationFrame(scrollRafId);
+      scrollRafId = 0;
+    }
+    currentLineElements = [];
+    currentLineOffsets = null;
+    cachedContainerHeight = 0;
     const version = ++renderVersion;
     applyEffect();
     const container = ensureContainer();
@@ -1736,7 +1792,14 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function renderPlain(target, text) {
-    const lines = text.split("\n").filter((l) => l.trim());
+    const isTag = /^\[(?:ti|ar|al|au|by|re|ve|length|offset):/i;
+    const timestampPrefix = /^\[\d+:\d+(?:[.,:]\d+)?\]\s*/;
+    const lines = String(text || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !isTag.test(l))
+      .map((l) => l.replace(timestampPrefix, "").trim())
+      .filter(Boolean);
     lines.forEach((line) => {
       const wrap = document.createElement("div");
       wrap.className = "synced-line";
@@ -1753,9 +1816,11 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function renderSynced(target, rawLines) {
+    currentLineElements = [];
     const lines = insertInstrumentalBreaks(rawLines);
     lines.forEach((line, index) => {
       const lineEl = document.createElement("div");
+      currentLineElements.push(lineEl);
       const rawText = clean(line.text);
       const isInstrumental = Boolean(line.isInstrumental || !rawText || rawText === "♪" || rawText === "..." || rawText === "•••");
       lineEl.className = `synced-line${isInstrumental ? " instrumental" : ""}`;
@@ -1812,6 +1877,30 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       lineEl.appendChild(text);
       target.appendChild(lineEl);
     });
+
+    const measureOffsets = () => {
+      cachedContainerHeight = target.clientHeight;
+      if (!currentLineElements.length) return;
+      const offsets = new Float64Array(currentLineElements.length);
+      for (let i = 0; i < currentLineElements.length; i++) {
+        offsets[i] = currentLineElements[i].offsetTop;
+      }
+      currentLineOffsets = offsets;
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(measureOffsets);
+    } else {
+      measureOffsets();
+    }
+
+    if (typeof ResizeObserver === "function") {
+      resizeObserver = new ResizeObserver(() => {
+        measureOffsets();
+      });
+      resizeObserver.observe(target);
+    }
+
     updateCurrentLine();
   }
 
@@ -1843,7 +1932,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
     const current = state()?.[currentProvider]?.data?.lines;
-    if (!current?.length) return;
+    if (!current?.length || !currentLineElements.length) return;
 
     const player = getPlayer();
     const currentTimeSec = typeof player?.getCurrentTime === "function"
@@ -1853,17 +1942,34 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     const currentIndex = current.findLastIndex((line) => line.timeInMs <= currentTimeMs);
 
     if (currentIndex === lastCurrentIndex) return;
+    const prevIndex = lastCurrentIndex;
     lastCurrentIndex = currentIndex;
 
-    const lines = container.querySelectorAll(".synced-line");
-    lines.forEach((line, index) => {
-      line.classList.toggle("current", index === currentIndex);
-      line.classList.toggle("previous", index < currentIndex);
-      line.classList.toggle("upcoming", index > currentIndex);
-    });
+    const applyLineUpdate = () => {
+      scrollRafId = 0;
+      if (prevIndex >= 0 && currentLineElements[prevIndex]) {
+        currentLineElements[prevIndex].classList.remove("current");
+      } else {
+        // clear stale lines
+        for (let i = 0; i < currentLineElements.length; i++) {
+          if (i !== currentIndex) {
+            currentLineElements[i].classList.remove("current");
+          }
+        }
+      }
+      if (currentIndex >= 0 && currentLineElements[currentIndex]) {
+        currentLineElements[currentIndex].classList.add("current");
+      }
+      if (currentIndex >= 0 && currentLineElements[currentIndex] && !isUserScrolling) {
+        scrollToLineIndex(currentIndex);
+      }
+    };
 
-    if (currentIndex >= 0 && lines[currentIndex] && !isUserScrolling) {
-      scrollToLineIndex(currentIndex);
+    if (typeof window.requestAnimationFrame === "function") {
+      if (scrollRafId) window.cancelAnimationFrame(scrollRafId);
+      scrollRafId = window.requestAnimationFrame(applyLineUpdate);
+    } else {
+      applyLineUpdate();
     }
   }
 
@@ -1904,6 +2010,10 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function invalidateActiveTrack() {
+    if (currentAbortController) {
+      currentAbortController.abort();
+      currentAbortController = null;
+    }
     currentTrackEpoch++;
     isUserScrolling = false;
     isInitialTrackScroll = true;
@@ -1929,15 +2039,21 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
       activeTrack?.artist !== info.artist;
 
     if (isDifferent || force) {
+      if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+      }
       currentTrackEpoch++;
       const epoch = currentTrackEpoch;
+      currentAbortController = typeof AbortController === "function" ? new AbortController() : null;
+      const signal = currentAbortController?.signal || null;
       isUserScrolling = false;
       isInitialTrackScroll = true;
       if (userScrollTimeout) window.clearTimeout(userScrollTimeout);
       activeTrack = info;
       manuallySwitched = false;
       lastCurrentIndex = -1;
-      ensureTrack(info, epoch);
+      ensureTrack(info, epoch, signal);
       render();
     }
   }
@@ -1977,6 +2093,21 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
   function stop() {
     running = false;
+    if (currentAbortController) {
+      currentAbortController.abort();
+      currentAbortController = null;
+    }
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+      resizeObserver = null;
+    }
+    if (scrollRafId) {
+      window.cancelAnimationFrame(scrollRafId);
+      scrollRafId = 0;
+    }
+    currentLineElements = [];
+    currentLineOffsets = null;
+    cachedContainerHeight = 0;
     currentTrackEpoch++;
     activeTrack = null;
     if (headerObserver) headerObserver.disconnect();
@@ -2014,5 +2145,5 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     render();
   }
 
-  runtime.register("synced_lyrics", { start, stop, update, fetchLrcLib, parseRetryAfter });
+  runtime.register("synced_lyrics", { start, stop, update, fetchLrcLib, parseRetryAfter, parseLrc, renderPlain });
 })();
