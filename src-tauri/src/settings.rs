@@ -31,6 +31,7 @@ pub struct Settings {
     pub output_device: String,
     pub equalizer: bool,
     pub equalizer_preset: String,
+    pub equalizer_custom_gains: String,
     pub precise_volume: bool,
     pub exponential_volume: bool,
     pub volume_step: f64,
@@ -44,6 +45,8 @@ pub struct Settings {
     pub video_toggle: bool,
     pub ambient_mode: bool,
     pub crossfade: bool,
+    pub crossfade_seconds: f64,
+    pub crossfade_curve: String,
     pub spotify_spoof: bool,
     pub last_notified_version: Option<String>,
     pub last_update_check: Option<u64>,
@@ -75,6 +78,7 @@ impl Default for Settings {
             output_device: "default".to_string(),
             equalizer: false,
             equalizer_preset: "bass-booster".to_string(),
+            equalizer_custom_gains: "0,0,0,0,0,0,0,0,0,0".to_string(),
             precise_volume: false,
             exponential_volume: false,
             volume_step: 1.0,
@@ -88,6 +92,8 @@ impl Default for Settings {
             video_toggle: false,
             ambient_mode: true,
             crossfade: false,
+            crossfade_seconds: 4.0,
+            crossfade_curve: "equal-power".to_string(),
             spotify_spoof: false,
             last_notified_version: None,
             last_update_check: None,
@@ -108,9 +114,32 @@ impl Settings {
         }
         if !matches!(
             self.equalizer_preset.as_str(),
-            "bass-booster" | "vocal-booster" | "rock" | "electronic" | "acoustic" | "flat"
+            "flat"
+                | "bass-booster"
+                | "bass-reducer"
+                | "treble-booster"
+                | "treble-reducer"
+                | "vocal-booster"
+                | "rock"
+                | "pop"
+                | "electronic"
+                | "hip-hop"
+                | "acoustic"
+                | "classical"
+                | "deep"
+                | "custom"
         ) {
             self.equalizer_preset = "bass-booster".to_string();
+        }
+        if self.equalizer_custom_gains.is_empty() || self.equalizer_custom_gains.len() > 256 {
+            self.equalizer_custom_gains = "0,0,0,0,0,0,0,0,0,0".to_string();
+        }
+        self.crossfade_seconds = finite_clamp(self.crossfade_seconds, 1.0, 15.0, 4.0);
+        if !matches!(
+            self.crossfade_curve.as_str(),
+            "equal-power" | "logarithmic" | "linear"
+        ) {
+            self.crossfade_curve = "equal-power".to_string();
         }
         if self.output_device.len() > 512 {
             self.output_device = "default".to_string();
@@ -213,6 +242,9 @@ mod tests {
         assert_eq!(settings.lyrics_line_effect, "fancy");
         assert_eq!(settings.output_device, "default");
         assert_eq!(settings.equalizer_preset, "bass-booster");
+        assert_eq!(settings.equalizer_custom_gains, "0,0,0,0,0,0,0,0,0,0");
+        assert_eq!(settings.crossfade_seconds, 4.0);
+        assert_eq!(settings.crossfade_curve, "equal-power");
         assert_eq!(settings.playback_rate, 1.0);
     }
 
@@ -224,6 +256,9 @@ mod tests {
             playback_rate: 0.01,
             lyrics_line_effect: "unknown".to_string(),
             equalizer_preset: "unknown".to_string(),
+            equalizer_custom_gains: "".to_string(),
+            crossfade_seconds: 99.0,
+            crossfade_curve: "unknown".to_string(),
             ..Settings::default()
         };
 
@@ -234,5 +269,8 @@ mod tests {
         assert_eq!(settings.playback_rate, 0.25);
         assert_eq!(settings.lyrics_line_effect, "fancy");
         assert_eq!(settings.equalizer_preset, "bass-booster");
+        assert_eq!(settings.equalizer_custom_gains, "0,0,0,0,0,0,0,0,0,0");
+        assert_eq!(settings.crossfade_seconds, 15.0);
+        assert_eq!(settings.crossfade_curve, "equal-power");
     }
 }

@@ -323,12 +323,21 @@ pub fn apply_setting_update(
         }
         "equalizer_preset" => {
             if let Some(
-                v
-                @ ("bass-booster" | "vocal-booster" | "rock" | "electronic" | "acoustic" | "flat"),
+                v @ ("flat" | "bass-booster" | "bass-reducer" | "treble-booster" | "treble-reducer"
+                | "vocal-booster" | "rock" | "pop" | "electronic" | "hip-hop" | "acoustic"
+                | "classical" | "deep" | "custom"),
             ) = value.as_str()
             {
                 settings.equalizer_preset = v.to_string();
                 return true;
+            }
+        }
+        "equalizer_custom_gains" => {
+            if let Some(v) = value.as_str() {
+                if v.len() <= 256 {
+                    settings.equalizer_custom_gains = v.to_string();
+                    return true;
+                }
             }
         }
         "precise_volume" => {
@@ -406,6 +415,18 @@ pub fn apply_setting_update(
         "crossfade" => {
             if let Some(v) = value.as_bool() {
                 settings.crossfade = v;
+                return true;
+            }
+        }
+        "crossfade_seconds" => {
+            if let Some(v) = value.as_f64() {
+                settings.crossfade_seconds = v.clamp(1.0, 15.0);
+                return true;
+            }
+        }
+        "crossfade_curve" => {
+            if let Some(v @ ("equal-power" | "logarithmic" | "linear")) = value.as_str() {
+                settings.crossfade_curve = v.to_string();
                 return true;
             }
         }
@@ -653,5 +674,39 @@ mod tests {
             "unknown_setting",
             &serde_json::json!(true)
         ));
+        assert!(apply_setting_update(
+            &mut settings,
+            "crossfade_seconds",
+            &serde_json::json!(25.0)
+        ));
+        assert_eq!(settings.crossfade_seconds, 15.0);
+        assert!(apply_setting_update(
+            &mut settings,
+            "crossfade_curve",
+            &serde_json::json!("logarithmic")
+        ));
+        assert_eq!(settings.crossfade_curve, "logarithmic");
+        assert!(!apply_setting_update(
+            &mut settings,
+            "crossfade_curve",
+            &serde_json::json!("exponential")
+        ));
+        assert!(apply_setting_update(
+            &mut settings,
+            "equalizer_preset",
+            &serde_json::json!("electronic")
+        ));
+        assert_eq!(settings.equalizer_preset, "electronic");
+        assert!(!apply_setting_update(
+            &mut settings,
+            "equalizer_preset",
+            &serde_json::json!("techno")
+        ));
+        assert!(apply_setting_update(
+            &mut settings,
+            "equalizer_custom_gains",
+            &serde_json::json!("1,2,3,4,5,6,5,4,3,2")
+        ));
+        assert_eq!(settings.equalizer_custom_gains, "1,2,3,4,5,6,5,4,3,2");
     }
 }

@@ -349,6 +349,7 @@ pub fn page_feature_config(settings: &settings::Settings) -> String {
         "output_device": settings.output_device,
         "equalizer": settings.equalizer,
         "equalizer_preset": settings.equalizer_preset,
+        "equalizer_custom_gains": settings.equalizer_custom_gains,
         "precise_volume": settings.precise_volume,
         "exponential_volume": settings.exponential_volume,
         "volume_step": settings.volume_step,
@@ -362,6 +363,8 @@ pub fn page_feature_config(settings: &settings::Settings) -> String {
         "video_toggle": settings.video_toggle,
         "ambient_mode": settings.ambient_mode,
         "crossfade": settings.crossfade,
+        "crossfade_seconds": settings.crossfade_seconds,
+        "crossfade_curve": settings.crossfade_curve,
         "spotify_spoof": settings.spotify_spoof,
     })
     .to_string()

@@ -430,6 +430,59 @@
     .ytm-action-btn-primary:hover {
       background: #e6002e;
     }
+
+    /* equalizer rack */
+    .ytm-eq-rack {
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .ytm-eq-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ytm-eq-bands {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 6px;
+      align-items: end;
+      padding: 10px 0 6px 0;
+    }
+    .ytm-eq-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .ytm-eq-val {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+      font-variant-numeric: tabular-nums;
+      min-height: 14px;
+    }
+    .ytm-eq-slider {
+      -webkit-appearance: slider-vertical;
+      appearance: slider-vertical;
+      writing-mode: vertical-lr;
+      direction: rtl;
+      width: 14px;
+      height: 110px;
+      accent-color: #ff0033;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+    .ytm-eq-freq {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.5);
+      text-align: center;
+      white-space: nowrap;
+    }
   `;
 
   function injectStyles() {
@@ -560,7 +613,7 @@
 
   function createSelect(key, title, desc, options, defaultValue) {
     const config = getConfig();
-    const currentVal = config[key] || defaultValue;
+    const currentVal = config[key] !== undefined ? String(config[key]) : String(defaultValue);
 
     const card = document.createElement("div");
     card.className = "ytm-settings-card";
@@ -578,16 +631,136 @@
       const el = document.createElement("option");
       el.value = opt.value;
       el.textContent = opt.label;
-      if (opt.value === currentVal) el.selected = true;
+      if (String(opt.value) === currentVal) el.selected = true;
       select.appendChild(el);
     }
     select.addEventListener("change", (e) => {
-      setSetting(key, e.target.value);
+      let val = e.target.value;
+      if (key === "crossfade_seconds") {
+        val = parseFloat(val) || 4;
+      }
+      setSetting(key, val);
     });
 
     card.appendChild(info);
     card.appendChild(select);
     return card;
+  }
+
+  function createEqualizerRack() {
+    const config = getConfig();
+    const frequencies = ["32Hz", "64Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz"];
+
+    let initialGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const currentPreset = config.equalizer_preset || "flat";
+    if (currentPreset === "custom" && config.equalizer_custom_gains) {
+      initialGains = config.equalizer_custom_gains.split(",").map((v) => Number(v.trim()) || 0);
+    } else if (window.__ytmFeatures?.equalizer?.presets?.[currentPreset]) {
+      initialGains = window.__ytmFeatures.equalizer.presets[currentPreset];
+    }
+    while (initialGains.length < 10) initialGains.push(0);
+
+    const rack = document.createElement("div");
+    rack.className = "ytm-eq-rack";
+    rack.id = "ytm-eq-rack";
+
+    const header = document.createElement("div");
+    header.className = "ytm-eq-header";
+
+    const titleBox = document.createElement("div");
+    setHTML(titleBox, `
+      <div style="font-size:13px;font-weight:600;color:#fff;">10-Band Graphic Equalizer</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.5);">Hardware-accelerated biquad frequency filters with anti-clipping limiter.</div>
+    `);
+
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "ytm-action-btn";
+    resetBtn.textContent = "Reset to Flat";
+    resetBtn.style.cssText = "padding:4px 10px;font-size:11px;height:auto;";
+
+    header.appendChild(titleBox);
+    header.appendChild(resetBtn);
+    rack.appendChild(header);
+
+    const bandsContainer = document.createElement("div");
+    bandsContainer.className = "ytm-eq-bands";
+
+    const sliderEls = [];
+    const valEls = [];
+
+    function updateRackFromGains(gains) {
+      gains.forEach((gain, idx) => {
+        if (sliderEls[idx]) sliderEls[idx].value = String(gain);
+        if (valEls[idx]) {
+          valEls[idx].textContent = gain > 0 ? `+${gain}dB` : `${gain}dB`;
+        }
+      });
+    }
+
+    frequencies.forEach((freq, idx) => {
+      const col = document.createElement("div");
+      col.className = "ytm-eq-col";
+
+      const valLabel = document.createElement("div");
+      valLabel.className = "ytm-eq-val";
+      const g = initialGains[idx] || 0;
+      valLabel.textContent = g > 0 ? `+${g}dB` : `${g}dB`;
+      valEls.push(valLabel);
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.className = "ytm-eq-slider";
+      slider.min = "-12";
+      slider.max = "12";
+      slider.step = "0.5";
+      slider.value = String(g);
+      sliderEls.push(slider);
+
+      slider.addEventListener("input", (e) => {
+        const val = parseFloat(e.target.value) || 0;
+        valLabel.textContent = val > 0 ? `+${val}dB` : `${val}dB`;
+
+        const currentGains = sliderEls.map((s) => parseFloat(s.value) || 0);
+        if (window.__ytmFeatures?.equalizer?.applyGains) {
+          window.__ytmFeatures.equalizer.applyGains(currentGains);
+        } else if (window.__ytmFeatures?.audioEngine?.setEqualizerGains) {
+          window.__ytmFeatures.audioEngine.setEqualizerGains(currentGains);
+        }
+
+        const presetSelect = document.getElementById("ytm-eq-preset-select");
+        if (presetSelect) presetSelect.value = "custom";
+
+        setSetting("equalizer_preset", "custom");
+        setSetting("equalizer_custom_gains", currentGains.join(","));
+      });
+
+      const freqLabel = document.createElement("div");
+      freqLabel.className = "ytm-eq-freq";
+      freqLabel.textContent = freq;
+
+      col.appendChild(valLabel);
+      col.appendChild(slider);
+      col.appendChild(freqLabel);
+      bandsContainer.appendChild(col);
+    });
+
+    rack.appendChild(bandsContainer);
+
+    resetBtn.addEventListener("click", () => {
+      const flatGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      updateRackFromGains(flatGains);
+      if (window.__ytmFeatures?.equalizer?.applyGains) {
+        window.__ytmFeatures.equalizer.applyGains(flatGains);
+      } else if (window.__ytmFeatures?.audioEngine?.setEqualizerGains) {
+        window.__ytmFeatures.audioEngine.setEqualizerGains(flatGains);
+      }
+      const presetSelect = document.getElementById("ytm-eq-preset-select");
+      if (presetSelect) presetSelect.value = "flat";
+      setSetting("equalizer_preset", "flat");
+      setSetting("equalizer_custom_gains", flatGains.join(","));
+    });
+
+    return { rack, updateRackFromGains };
   }
 
   function renderGeneral(container) {
@@ -650,28 +823,79 @@
   function renderAudio(container) {
     setHTML(container, `
       <h2 style="font-size:20px;margin:0 0 4px 0;color:#fff;">Audio & Equalizer</h2>
-      <p style="font-size:12px;color:rgba(255,255,255,0.6);margin:0 0 20px 0;">Equalizer DSP, volume curves, variable speed, and output routing.</p>
+      <p style="font-size:12px;color:rgba(255,255,255,0.6);margin:0 0 20px 0;">10-band graphic equalizer, smooth equal-power crossfade, volume curves, and routing.</p>
     `);
     const group = document.createElement("div");
     group.className = "ytm-card-group";
-    group.appendChild(createToggle("equalizer", "Equalizer DSP", "Enable graphic equalizer and frequency shaping.", false));
+    group.appendChild(createToggle("equalizer", "Equalizer DSP", "Enable 10-band graphic equalizer and anti-clipping limiter.", false));
+
     const presets = [
-      { value: "bass-booster", label: "Bass Booster" },
-      { value: "vocal-booster", label: "Vocal Booster" },
-      { value: "rock", label: "Rock" },
-      { value: "electronic", label: "Electronic / Dance" },
-      { value: "acoustic", label: "Acoustic" },
       { value: "flat", label: "Flat / Neutral" },
+      { value: "bass-booster", label: "Bass Boost" },
+      { value: "bass-reducer", label: "Bass Reducer" },
+      { value: "treble-booster", label: "Treble Boost" },
+      { value: "treble-reducer", label: "Treble Reducer" },
+      { value: "vocal-booster", label: "Vocal Boost" },
+      { value: "rock", label: "Rock" },
+      { value: "pop", label: "Pop" },
+      { value: "electronic", label: "Electronic / Dance" },
+      { value: "hip-hop", label: "Hip-Hop" },
+      { value: "acoustic", label: "Acoustic" },
+      { value: "classical", label: "Classical" },
+      { value: "deep", label: "R&B / Deep" },
+      { value: "custom", label: "Custom" },
     ];
-    group.appendChild(createSelect("equalizer_preset", "Equalizer Preset", "Frequency profile applied when Equalizer is active.", presets, "bass-booster"));
+    const presetCard = createSelect("equalizer_preset", "Equalizer Preset", "Select frequency profile or customize individual bands below.", presets, "bass-booster");
+    const selectEl = presetCard.querySelector("select");
+    if (selectEl) selectEl.id = "ytm-eq-preset-select";
+    group.appendChild(presetCard);
+
+    const { rack, updateRackFromGains } = createEqualizerRack();
+    group.appendChild(rack);
+
+    if (selectEl) {
+      selectEl.addEventListener("change", (e) => {
+        const val = e.target.value;
+        if (val !== "custom") {
+          const p = window.__ytmFeatures?.equalizer?.presets?.[val];
+          if (p) {
+            updateRackFromGains(p);
+            setSetting("equalizer_custom_gains", p.join(","));
+          }
+        }
+      });
+    }
+
+    group.appendChild(createToggle("crossfade", "Crossfade Audio", "Smooth volume transition between consecutive tracks.", false));
+
+    const durations = [
+      { value: "1", label: "1 second" },
+      { value: "2", label: "2 seconds" },
+      { value: "3", label: "3 seconds" },
+      { value: "4", label: "4 seconds (Default)" },
+      { value: "5", label: "5 seconds" },
+      { value: "6", label: "6 seconds" },
+      { value: "8", label: "8 seconds" },
+      { value: "10", label: "10 seconds" },
+      { value: "12", label: "12 seconds" },
+    ];
+    group.appendChild(createSelect("crossfade_seconds", "Crossfade Duration", "Duration of the smooth fade between tracks.", durations, "4"));
+
+    const curves = [
+      { value: "equal-power", label: "Equal-Power (Smooth / Recommended)" },
+      { value: "logarithmic", label: "Logarithmic (Exponential)" },
+      { value: "linear", label: "Linear" },
+    ];
+    group.appendChild(createSelect("crossfade_curve", "Crossfade Curve", "Mathematical volume curve applied during fading.", curves, "equal-power"));
+
     group.appendChild(createToggle("precise_volume", "Precise Volume Steps", "Granular 1% mouse-wheel volume increments.", false));
     group.appendChild(createToggle("exponential_volume", "Exponential Volume Curve", "Logarithmic volume curve matching human ear perception.", false));
     group.appendChild(createToggle("playback_speed", "Playback Speed Controls", "Add dedicated variable speed slider to the player bar.", false));
-    group.appendChild(createToggle("crossfade", "Crossfade Audio", "Smooth volume transition between consecutive tracks.", false));
     group.appendChild(createToggle("custom_output_device", "Custom Output Device", "Route YouTube Music playback to a dedicated sound output.", false));
 
     container.appendChild(group);
   }
+
 
   function renderTweaks(container) {
     setHTML(container, `
