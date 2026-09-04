@@ -121,3 +121,52 @@ test("rejected setting writes restore the previous runtime value", async () => {
   await assert.rejects(pending, /invalid setting value/);
   assert.equal(context.window.__ytmFeatures.config.synced_lyrics, true);
 });
+
+test("clearOrphanedInert removes inert attribute when no dialog is visible", () => {
+  let inertRemoved = false;
+  let pointerDownHandler = null;
+  const layout = {
+    removeAttribute(attr) {
+      if (attr === "inert") inertRemoved = true;
+    },
+  };
+  const context = {
+    clearTimeout() {},
+    console,
+    Date,
+    document: {
+      addEventListener() {},
+      documentElement: {},
+      querySelector(selector) {
+        if (selector === "ytmusic-app-layout[inert]") return layout;
+        return null;
+      },
+      querySelectorAll() {
+        return [];
+      },
+      createElement() {
+        return { id: "", textContent: "", appendChild() {} };
+      },
+      getElementById() {
+        return null;
+      },
+      readyState: "complete",
+      title: "YouTube Music",
+    },
+    setTimeout() {
+      return 1;
+    },
+    setInterval() {
+      return 1;
+    },
+    addEventListener(event, handler) {
+      if (event === "pointerdown") pointerDownHandler = handler;
+    },
+  };
+  context.window = context;
+  vm.runInNewContext(source, context);
+
+  assert.equal(typeof pointerDownHandler, "function");
+  pointerDownHandler();
+  assert.equal(inertRemoved, true);
+});

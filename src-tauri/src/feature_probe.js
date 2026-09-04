@@ -217,6 +217,40 @@
     injectGuard();
   }
 
+  // unblock clicks
+  function clearOrphanedInert() {
+    if (typeof document?.querySelector !== "function") {
+      return;
+    }
+    const layout = document.querySelector("ytmusic-app-layout[inert]");
+    if (!layout) {
+      return;
+    }
+    const dialog = document.querySelector(
+      "tp-yt-paper-dialog:not([style*='display: none']), ytmusic-dialog:not([style*='display: none']), #ytm-settings-modal.open, #ytm-restart-dialog"
+    );
+    if (dialog && dialog.offsetParent !== null) {
+      return;
+    }
+    layout.removeAttribute("inert");
+    if (typeof document.querySelectorAll === "function") {
+      for (const backdrop of document.querySelectorAll("tp-yt-iron-overlay-backdrop.opened")) {
+        backdrop.classList?.remove?.("opened");
+        backdrop.removeAttribute?.("opened");
+        if (backdrop.style) {
+          backdrop.style.pointerEvents = "none";
+        }
+      }
+    }
+  }
+
+  if (typeof window?.addEventListener === "function") {
+    window.addEventListener("pointerdown", clearOrphanedInert, true);
+  }
+  if (typeof setInterval === "function") {
+    setInterval(clearOrphanedInert, 2000);
+  }
+
   window.__ytmFeatures = api;
   api.configure(window.__ytmFeatureConfig || {});
 })();

@@ -8,13 +8,13 @@
   window.__ytMusicTauriAdBlockInstalled = true;
 
   const savedMediaState = new WeakMap();
+  let hasSavedMedia = false;
   const style = document.createElement("style");
   style.textContent = `
     ytd-ad-slot-renderer,
     ytd-display-ad-renderer,
     ytd-in-feed-ad-layout-renderer,
     ytd-promoted-sparkles-web-renderer,
-    ytmusic-mealbar-promo-renderer,
     ytmusic-guide-section-renderer:first-of-type ytmusic-guide-entry-renderer:nth-child(n+4),
     ytmusic-guide-entry-renderer:has(a[href*="/upgrade"]),
     ytmusic-guide-entry-renderer:has(a[href*="music_premium"]),
@@ -38,9 +38,16 @@
     .html5-video-player.ad-interrupting .ytp-ad-module {
       display: none !important;
     }
+    ytmusic-mealbar-promo-renderer {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
   `;
 
   const injectStyle = () => {
+    if (window.__ytMusicTauriAdBlockEnabled === false) {
+      return;
+    }
     const target = document.head || document.documentElement;
     if (target) {
       target.appendChild(style);
@@ -62,7 +69,40 @@
     );
   };
 
+  let popupObserver = null;
+  const dismissMealbar = () => {
+    const mealbar = document.querySelector("ytmusic-mealbar-promo-renderer");
+    if (!mealbar) {
+      return;
+    }
+    if (typeof mealbar.dismiss === "function") {
+      mealbar.dismiss();
+      return;
+    }
+    const dismissBtn = mealbar.querySelector(
+      "#dismiss-button, [aria-label*='Dismiss' i], yt-button-renderer:last-child button"
+    );
+    if (dismissBtn) {
+      dismissBtn.click();
+    }
+  };
+
+  const attachPopupObserver = () => {
+    if (popupObserver) {
+      return;
+    }
+    const container = document.querySelector("ytmusic-popup-container");
+    if (!container) {
+      return;
+    }
+    popupObserver = new MutationObserver(dismissMealbar);
+    popupObserver.observe(container, { childList: true, subtree: true });
+  };
+
   const restoreMedia = () => {
+    if (!hasSavedMedia) {
+      return;
+    }
     for (const media of document.querySelectorAll("video, audio")) {
       const saved = savedMediaState.get(media);
       if (!saved) {
@@ -72,6 +112,7 @@
       media.playbackRate = saved.playbackRate;
       savedMediaState.delete(media);
     }
+    hasSavedMedia = false;
   };
 
   const skipAd = () => {
@@ -88,6 +129,7 @@
           muted: media.muted,
           playbackRate: media.playbackRate,
         });
+        hasSavedMedia = true;
       }
 
       media.muted = true;
@@ -100,13 +142,16 @@
         try {
           media.currentTime = Math.max(media.currentTime, media.duration - 0.1);
         } catch {
-          // fallback seek
+          // seek fallback
         }
       }
     }
   };
 
   const run = () => {
+    attachPopupObserver();
+    dismissMealbar();
+
     if (
       window.__ytMusicTauriAdBlockEnabled === false ||
       !isMusicHost() ||

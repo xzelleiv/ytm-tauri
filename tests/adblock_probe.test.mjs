@@ -146,5 +146,7 @@ test("never hides or removes generic YouTube Music dialogs", () => {
   const injectedCss = harness.styles.map((style) => style.textContent).join("\n");
 
   assert.doesNotMatch(injectedCss, /ytmusic-popup-container|tp-yt-paper-dialog/);
+  assert.doesNotMatch(injectedCss, /ytmusic-mealbar-promo-renderer[^}]*display:\s*none/);
+  assert.match(injectedCss, /ytmusic-mealbar-promo-renderer[\s\S]*?opacity:\s*0/);
   assert.doesNotMatch(probeScript, /\.remove\s*\(/);
 });
