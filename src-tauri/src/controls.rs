@@ -46,6 +46,9 @@ const LYRICS_TIMECODES_ID: &str = "feature_lyrics_timecodes";
 const LYRICS_PRECISE_TIMING_ID: &str = "feature_lyrics_precise_timing";
 const LYRICS_ROMANIZATION_ID: &str = "feature_lyrics_romanization";
 const LYRICS_AUTO_SYNC_ID: &str = "feature_lyrics_auto_sync";
+const LYRICS_EFFECT_CINEMATIC_ID: &str = "feature_lyrics_effect_cinematic";
+const LYRICS_EFFECT_STUDIO_ID: &str = "feature_lyrics_effect_studio";
+const LYRICS_EFFECT_LUMINESCENT_ID: &str = "feature_lyrics_effect_luminescent";
 const LYRICS_EFFECT_FANCY_ID: &str = "feature_lyrics_effect_fancy";
 const LYRICS_EFFECT_SCALE_ID: &str = "feature_lyrics_effect_scale";
 const LYRICS_EFFECT_OFFSET_ID: &str = "feature_lyrics_effect_offset";
@@ -260,6 +263,24 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         "Auto Sync Lyrics after 3 Seconds",
         initial.lyrics_auto_sync,
     )?;
+    let effect_cinematic = feature_item(
+        app,
+        LYRICS_EFFECT_CINEMATIC_ID,
+        "Cinematic (Depth & Blur)",
+        initial.lyrics_line_effect == "cinematic",
+    )?;
+    let effect_studio = feature_item(
+        app,
+        LYRICS_EFFECT_STUDIO_ID,
+        "Studio (High-Contrast)",
+        initial.lyrics_line_effect == "studio",
+    )?;
+    let effect_luminescent = feature_item(
+        app,
+        LYRICS_EFFECT_LUMINESCENT_ID,
+        "Luminescent (Ambient Shimmer)",
+        initial.lyrics_line_effect == "luminescent",
+    )?;
     let effect_fancy = feature_item(
         app,
         LYRICS_EFFECT_FANCY_ID,
@@ -285,6 +306,9 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         initial.lyrics_line_effect == "focus",
     )?;
     let effect_menu = SubmenuBuilder::new(app, "Line Animation Effect")
+        .item(&effect_cinematic)
+        .item(&effect_studio)
+        .item(&effect_luminescent)
         .item(&effect_fancy)
         .item(&effect_scale)
         .item(&effect_offset)
@@ -448,6 +472,9 @@ fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi>
         (LYRICS_PRECISE_TIMING_ID, lyrics_precise),
         (LYRICS_ROMANIZATION_ID, lyrics_romanization),
         (LYRICS_AUTO_SYNC_ID, lyrics_auto_sync),
+        (LYRICS_EFFECT_CINEMATIC_ID, effect_cinematic),
+        (LYRICS_EFFECT_STUDIO_ID, effect_studio),
+        (LYRICS_EFFECT_LUMINESCENT_ID, effect_luminescent),
         (LYRICS_EFFECT_FANCY_ID, effect_fancy),
         (LYRICS_EFFECT_SCALE_ID, effect_scale),
         (LYRICS_EFFECT_OFFSET_ID, effect_offset),
@@ -640,6 +667,18 @@ fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &She
             value.lyrics_auto_sync = !value.lyrics_auto_sync;
             is_now_enabled = value.lyrics_auto_sync;
         }
+        LYRICS_EFFECT_CINEMATIC_ID => {
+            value.lyrics_line_effect = "cinematic".to_string();
+            is_now_enabled = true;
+        }
+        LYRICS_EFFECT_STUDIO_ID => {
+            value.lyrics_line_effect = "studio".to_string();
+            is_now_enabled = true;
+        }
+        LYRICS_EFFECT_LUMINESCENT_ID => {
+            value.lyrics_line_effect = "luminescent".to_string();
+            is_now_enabled = true;
+        }
         LYRICS_EFFECT_FANCY_ID => {
             value.lyrics_line_effect = "fancy".to_string();
             is_now_enabled = true;
@@ -728,19 +767,7 @@ fn handle_feature_event(app: &AppHandle, id: &str, state: &AppState, shell: &She
     });
 
     if id.starts_with("feature_lyrics_effect_") {
-        let current_effect = settings::snapshot(&state.settings).lyrics_line_effect;
-        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_FANCY_ID) {
-            let _ = it.set_checked(current_effect == "fancy");
-        }
-        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_SCALE_ID) {
-            let _ = it.set_checked(current_effect == "scale");
-        }
-        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_OFFSET_ID) {
-            let _ = it.set_checked(current_effect == "offset");
-        }
-        if let Some(it) = shell.feature_items.get(LYRICS_EFFECT_FOCUS_ID) {
-            let _ = it.set_checked(current_effect == "focus");
-        }
+        sync_tray_effects(app, state);
     } else {
         let _ = item.set_checked(is_now_enabled);
     }
@@ -759,6 +786,26 @@ fn sync_page_features(app: &AppHandle, state: &AppState) {
             "window.__ytmFeatureConfig = {config}; window.__ytmFeatures?.configure(window.__ytmFeatureConfig);"
         ),
     );
+}
+
+pub fn sync_tray_effects(app: &AppHandle, state: &AppState) {
+    let Some(shell) = app.try_state::<ShellUi>() else {
+        return;
+    };
+    let current_effect = settings::snapshot(&state.settings).lyrics_line_effect;
+    for (id, val) in [
+        (LYRICS_EFFECT_CINEMATIC_ID, "cinematic"),
+        (LYRICS_EFFECT_STUDIO_ID, "studio"),
+        (LYRICS_EFFECT_LUMINESCENT_ID, "luminescent"),
+        (LYRICS_EFFECT_FANCY_ID, "fancy"),
+        (LYRICS_EFFECT_SCALE_ID, "scale"),
+        (LYRICS_EFFECT_OFFSET_ID, "offset"),
+        (LYRICS_EFFECT_FOCUS_ID, "focus"),
+    ] {
+        if let Some(it) = shell.feature_items.get(id) {
+            let _ = it.set_checked(current_effect == val);
+        }
+    }
 }
 
 fn handle_local_shortcut(app: &AppHandle, action: &str, state: &AppState) {

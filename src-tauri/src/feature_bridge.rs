@@ -83,6 +83,8 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
                             snap.launch_at_startup,
                             snap.start_minimized,
                         );
+                    } else if key == "lyrics_line_effect" {
+                        crate::controls::sync_tray_effects(window.app_handle(), state);
                     }
                     updated_settings = Some(sanitize_settings(snap));
                 }
@@ -266,7 +268,16 @@ pub fn apply_setting_update(
             }
         }
         "lyrics_line_effect" => {
-            if let Some(v @ ("fancy" | "scale" | "offset" | "focus")) = value.as_str() {
+            if let Some(
+                v @ ("fancy"
+                | "scale"
+                | "offset"
+                | "focus"
+                | "cinematic"
+                | "studio"
+                | "luminescent"),
+            ) = value.as_str()
+            {
                 settings.lyrics_line_effect = v.to_string();
                 return true;
             }
@@ -663,6 +674,14 @@ mod tests {
             "lyrics_line_effect",
             &serde_json::json!("invalid")
         ));
+        for effect in ["cinematic", "studio", "luminescent"] {
+            assert!(apply_setting_update(
+                &mut settings,
+                "lyrics_line_effect",
+                &serde_json::json!(effect)
+            ));
+            assert_eq!(settings.lyrics_line_effect, effect);
+        }
         assert!(apply_setting_update(
             &mut settings,
             "zoom",

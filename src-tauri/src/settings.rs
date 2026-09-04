@@ -108,7 +108,13 @@ impl Settings {
         self.playback_rate = finite_clamp(self.playback_rate, 0.25, 3.0, 1.0);
         if !matches!(
             self.lyrics_line_effect.as_str(),
-            "fancy" | "scale" | "offset" | "focus"
+            "fancy"
+                | "scale"
+                | "offset"
+                | "focus"
+                | "cinematic"
+                | "studio"
+                | "luminescent"
         ) {
             self.lyrics_line_effect = "fancy".to_string();
         }
@@ -272,5 +278,17 @@ mod tests {
         assert_eq!(settings.equalizer_custom_gains, "0,0,0,0,0,0,0,0,0,0");
         assert_eq!(settings.crossfade_seconds, 15.0);
         assert_eq!(settings.crossfade_curve, "equal-power");
+    }
+
+    #[test]
+    fn normalization_preserves_new_lyrics_effects() {
+        for effect in ["cinematic", "studio", "luminescent"] {
+            let mut settings = Settings {
+                lyrics_line_effect: effect.to_string(),
+                ..Settings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.lyrics_line_effect, effect);
+        }
     }
 }

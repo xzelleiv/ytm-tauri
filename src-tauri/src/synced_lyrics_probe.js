@@ -117,9 +117,87 @@ ytmusic-tab-renderer[page-type='MUSIC_PAGE_TYPE_TRACK_LYRICS'],
 
   /* colors */
   --glow-color: rgba(255, 255, 255, 0.5);
+
+  /* effects defaults */
+  --lyrics-inactive-blur: 0px;
+  --lyrics-active-blur: 0px;
+  --lyrics-hover-blur: 0px;
+  --lyrics-hover-opacity: 0.85;
+  --lyrics-letter-spacing: normal;
+  --lyrics-vlist-mask: none;
 }
 
 /* line effects */
+html[data-lyrics-effect="cinematic"], :root[data-lyrics-effect="cinematic"] {
+  --lyrics-font-size: clamp(1.5rem, 1.3vmax, 2.4rem);
+  --lyrics-line-height: 1.4;
+  --lyrics-width: 100%;
+  --lyrics-padding: 0.5rem;
+  --lyrics-inactive-font-weight: 600;
+  --lyrics-inactive-opacity: 0.35;
+  --lyrics-inactive-scale: 0.98;
+  --lyrics-inactive-offset: 0;
+  --lyrics-inactive-blur: 1.5px;
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1.03;
+  --lyrics-active-offset: 0;
+  --lyrics-active-blur: 0px;
+  --lyrics-hover-blur: 0.5px;
+  --lyrics-hover-opacity: 0.75;
+  --lyrics-animations: none;
+  --lyrics-scale-duration: 0.28s;
+  --lyrics-opacity-transition: 0.28s;
+  --lyrics-vlist-mask: linear-gradient(to bottom, transparent 0%, black 8%, black 90%, transparent 100%);
+}
+
+html[data-lyrics-effect="studio"], :root[data-lyrics-effect="studio"] {
+  --lyrics-font-size: clamp(1.4rem, 1.2vmax, 2.2rem);
+  --lyrics-line-height: 1.45;
+  --lyrics-width: 100%;
+  --lyrics-padding: 0.3rem;
+  --lyrics-letter-spacing: -0.015em;
+  --lyrics-inactive-font-weight: 500;
+  --lyrics-inactive-opacity: 0.38;
+  --lyrics-inactive-scale: 1;
+  --lyrics-inactive-offset: 0;
+  --lyrics-inactive-blur: 0px;
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1;
+  --lyrics-active-offset: 0;
+  --lyrics-active-blur: 0px;
+  --lyrics-hover-blur: 0px;
+  --lyrics-hover-opacity: 0.85;
+  --lyrics-animations: none;
+  --lyrics-scale-duration: 0.2s;
+  --lyrics-opacity-transition: 0.2s;
+  --lyrics-vlist-mask: none;
+}
+
+html[data-lyrics-effect="luminescent"], :root[data-lyrics-effect="luminescent"] {
+  --lyrics-font-size: clamp(1.5rem, 1.3vmax, 2.4rem);
+  --lyrics-line-height: 1.38;
+  --lyrics-width: 100%;
+  --lyrics-padding: 0.45rem;
+  --lyrics-inactive-font-weight: 600;
+  --lyrics-inactive-opacity: 0.32;
+  --lyrics-inactive-scale: 0.97;
+  --lyrics-inactive-offset: 0;
+  --lyrics-inactive-blur: 0px;
+  --lyrics-active-font-weight: 700;
+  --lyrics-active-opacity: 1;
+  --lyrics-active-scale: 1.02;
+  --lyrics-active-offset: 0;
+  --lyrics-active-blur: 0px;
+  --lyrics-hover-blur: 0px;
+  --lyrics-hover-opacity: 0.80;
+  --lyrics-animations: lyrics-luminescent-shimmer 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --lyrics-scale-duration: 0.28s;
+  --lyrics-opacity-transition: 0.28s;
+  --lyrics-vlist-mask: none;
+}
+
 html[data-lyrics-effect="fancy"], :root[data-lyrics-effect="fancy"] {
   --lyrics-font-size: 3rem;
   --lyrics-line-height: 1.333;
@@ -313,14 +391,33 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   scrollbar-width: none !important;
   padding: 16px 12px 50vh 12px !important;
   box-sizing: border-box !important;
+  mask-image: var(--lyrics-vlist-mask, none);
+  -webkit-mask-image: var(--lyrics-vlist-mask, none);
 }
 .synced-lyrics-vlist::-webkit-scrollbar { display: none; }
+
+html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist:not(.is-scrolled) {
+  mask-image: linear-gradient(to bottom, black 0%, black 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 90%, transparent 100%);
+}
+html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 90%, transparent 100%);
+}
+
+.synced-lyrics-vlist.is-plain .text-lyrics {
+  filter: none !important;
+  opacity: 0.9 !important;
+  scale: 1 !important;
+}
 
 .synced-line {
   width: var(--lyrics-width, 100%);
   margin: var(--global-margin) 0;
   transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
   display: block;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 45px;
 }
 
 .synced-line .text-lyrics {
@@ -339,11 +436,14 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   font-size: var(--lyrics-font-size) !important;
   font-weight: var(--lyrics-inactive-font-weight) !important;
   line-height: var(--lyrics-line-height) !important;
+  letter-spacing: var(--lyrics-letter-spacing, normal) !important;
   padding-top: var(--lyrics-padding);
   padding-bottom: var(--lyrics-padding);
   scale: var(--lyrics-inactive-scale);
   translate: var(--lyrics-inactive-offset);
-  transition: scale var(--lyrics-scale-duration), translate 0.3s ease-in-out, opacity var(--lyrics-opacity-transition);
+  filter: blur(var(--lyrics-inactive-blur, 0px));
+  will-change: scale, translate, opacity, filter;
+  transition: scale var(--lyrics-scale-duration), translate 0.3s ease-in-out, opacity var(--lyrics-opacity-transition), filter var(--lyrics-opacity-transition);
   display: block;
   text-align: left;
   transform-origin: 0 50%;
@@ -362,6 +462,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   font-weight: var(--lyrics-active-font-weight) !important;
   scale: var(--lyrics-active-scale);
   translate: var(--lyrics-active-offset);
+  filter: blur(var(--lyrics-active-blur, 0px));
   color: #ffffff !important;
 }
 
@@ -377,6 +478,10 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   font-style: italic !important;
   display: block;
   margin-top: 4px;
+  filter: blur(calc(var(--lyrics-inactive-blur, 0px) * 0.5));
+}
+.synced-line.current .text-lyrics > .romaji {
+  filter: none !important;
 }
 
 .text-lyrics > .timecode {
@@ -438,6 +543,21 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   to { text-shadow: 0 0 0 var(--glow-color); }
 }
 
+@keyframes lyrics-luminescent-shimmer {
+  0% {
+    filter: drop-shadow(0 0 0px transparent);
+    transform: translateY(0);
+  }
+  40% {
+    filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.55));
+    transform: translateY(-2px);
+  }
+  100% {
+    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.25));
+    transform: translateY(-1px);
+  }
+}
+
 .line-seek-pulse {
   animation: line-seek-flash 0.45s ease-out !important;
 }
@@ -457,7 +577,8 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   position: relative;
 }
 .synced-line:hover .text-lyrics {
-  opacity: 0.85;
+  opacity: var(--lyrics-hover-opacity, 0.85);
+  filter: blur(var(--lyrics-hover-blur, 0px));
 }
 .synced-line .seek-hint-icon {
   position: absolute;
@@ -1580,8 +1701,11 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     }
   }
 
+  const VALID_EFFECTS = new Set(["fancy", "scale", "offset", "focus", "cinematic", "studio", "luminescent"]);
+
   function applyEffect() {
-    const effect = config().lyrics_line_effect || "fancy";
+    const raw = config().lyrics_line_effect;
+    const effect = VALID_EFFECTS.has(raw) ? raw : "fancy";
     if (document?.documentElement?.dataset) {
       document.documentElement.dataset.lyricsEffect = effect;
     }
@@ -1634,6 +1758,9 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
 
     const vlist = document.createElement("div");
     vlist.className = "synced-lyrics-vlist";
+    vlist.addEventListener("scroll", () => {
+      vlist.classList.toggle("is-scrolled", vlist.scrollTop > 10);
+    }, { passive: true });
     vlist.addEventListener("wheel", onUserScroll, { passive: true });
     vlist.addEventListener("touchmove", onUserScroll, { passive: true });
     root.appendChild(vlist);
@@ -1792,6 +1919,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function renderPlain(target, text) {
+    target?.classList?.add?.("is-plain");
     const isTag = /^\[(?:ti|ar|al|au|by|re|ve|length|offset):/i;
     const timestampPrefix = /^\[\d+:\d+(?:[.,:]\d+)?\]\s*/;
     const lines = String(text || "")
@@ -1816,6 +1944,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
   }
 
   function renderSynced(target, rawLines) {
+    target?.classList?.remove?.("is-plain");
     currentLineElements = [];
     const lines = insertInstrumentalBreaks(rawLines);
     lines.forEach((line, index) => {
@@ -2145,5 +2274,5 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     render();
   }
 
-  runtime.register("synced_lyrics", { start, stop, update, fetchLrcLib, parseRetryAfter, parseLrc, renderPlain });
+  runtime.register("synced_lyrics", { start, stop, update, applyEffect, fetchLrcLib, parseRetryAfter, parseLrc, renderPlain });
 })();

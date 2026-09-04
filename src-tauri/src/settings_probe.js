@@ -810,6 +810,9 @@
     group.appendChild(createToggle("lyrics_show_timecodes", "Show Timecodes", "Display millisecond timestamp markers beside lyric lines.", false));
 
     const effects = [
+      { value: "cinematic", label: "Cinematic (Depth & Blur)" },
+      { value: "studio", label: "Studio (High-Contrast)" },
+      { value: "luminescent", label: "Luminescent (Ambient Shimmer)" },
       { value: "fancy", label: "Fancy (Glow & Wobble)" },
       { value: "scale", label: "Scale (Active Focus)" },
       { value: "offset", label: "Offset (Indented)" },

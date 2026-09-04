@@ -33,10 +33,25 @@ function createRuntime() {
           removeProperty() {},
         },
         classList: {
-          add() {},
-          remove() {},
-          contains() {
-            return false;
+          _set: new Set(),
+          add(...classes) {
+            for (const c of classes) this._set.add(c);
+          },
+          remove(...classes) {
+            for (const c of classes) this._set.delete(c);
+          },
+          toggle(c, force) {
+            if (force === undefined) {
+              if (this._set.has(c)) this._set.delete(c);
+              else this._set.add(c);
+            } else if (force) {
+              this._set.add(c);
+            } else {
+              this._set.delete(c);
+            }
+          },
+          contains(c) {
+            return this._set.has(c);
           },
         },
         appendChild(child) {
@@ -343,6 +358,7 @@ test("renderPlain sanitizes metadata headers and leading timestamps", () => {
 
   plugin.renderPlain(target, rawPlain);
   assert.equal(target.children.length, 2);
+  assert.ok(target.classList.contains("is-plain"));
   const firstText = target.children[0].children[0].children[0].children[0].textContent;
   const secondText = target.children[1].children[0].children[0].children[0].textContent;
   assert.equal(firstText, "First line of song");
@@ -365,6 +381,25 @@ test("fetchLrcLib aborts immediately when signal is aborted", async () => {
   const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 0, controller.signal);
   assert.equal(res, null);
   assert.equal(fetchCalled, false);
+});
+
+test("lyrics effects apply dataset attribute for all 7 presets", () => {
+  const presets = ["cinematic", "studio", "luminescent", "fancy", "scale", "offset", "focus"];
+  for (const effect of presets) {
+    const { context, features } = createRuntime();
+    context.window.__ytmFeatures.config.lyrics_line_effect = effect;
+    const plugin = features.get("synced_lyrics");
+    plugin.applyEffect();
+    assert.equal(context.document.documentElement.dataset.lyricsEffect, effect);
+  }
+});
+
+test("lyrics effect falls back to fancy on unknown or corrupt effect string", () => {
+  const { context, features } = createRuntime();
+  context.window.__ytmFeatures.config.lyrics_line_effect = "unknown_corrupt_preset";
+  const plugin = features.get("synced_lyrics");
+  plugin.applyEffect();
+  assert.equal(context.document.documentElement.dataset.lyricsEffect, "fancy");
 });
 
 
