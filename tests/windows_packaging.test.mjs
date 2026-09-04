@@ -37,11 +37,11 @@ test("application versions stay aligned", () => {
     new URL("../src-tauri/Cargo.toml", import.meta.url),
     "utf8",
   );
-  assert.equal(packageJson.version, "0.2.4");
-  assert.equal(packageLock.version, "0.2.4");
-  assert.equal(packageLock.packages[""].version, "0.2.4");
-  assert.equal(tauriConfig.version, "0.2.4");
-  assert.match(cargoToml, /^version = "0\.2\.4"$/m);
+  assert.equal(packageJson.version, "0.2.5");
+  assert.equal(packageLock.version, "0.2.5");
+  assert.equal(packageLock.packages[""].version, "0.2.5");
+  assert.equal(tauriConfig.version, "0.2.5");
+  assert.match(cargoToml, /^version = "0\.2\.5"$/m);
 });
 
 test("signed in-app updater is configured and owned by Rust", () => {

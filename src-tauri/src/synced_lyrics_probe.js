@@ -1077,7 +1077,7 @@ html[data-lyrics-effect="focus"], :root[data-lyrics-effect="focus"] {
     if (Date.now() < lrclibBlockedUntil) {
       return null;
     }
-    const headers = { "Lrclib-Client": "ytm-tauri/0.2.4 (https://github.com/xzelleiv/ytm-tauri)" };
+    const headers = { "Lrclib-Client": "ytm-tauri/0.2.5 (https://github.com/xzelleiv/ytm-tauri)" };
     try {
       const res = await window.fetch(url, { headers, signal });
       if (res.status === 429) {

@@ -1,6 +1,6 @@
 [package]
 name = "yt-music-tauri"
-version = "0.2.4"
+version = "0.2.5"
 description = "Low-memory YouTube Music desktop wrapper with native ad filtering and Discord Rich Presence support"
 authors = ["xzelleiv", "Henix (Original Creator)"]
 license = "MIT"

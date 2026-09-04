@@ -1009,7 +1009,7 @@
         <div class="ytm-modal-topbar">
           <div class="ytm-modal-heading">
             YouTube Music Settings
-            <span>v0.2.3 by xzelleiv</span>
+            <span>v0.2.5 by xzelleiv</span>
           </div>
           <button class="ytm-modal-close" id="ytm-modal-close-btn" title="Close Settings">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
