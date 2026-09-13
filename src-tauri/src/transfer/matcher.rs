@@ -30,10 +30,14 @@ pub fn score_candidate(source: &SourceTrack, candidate: &mut MatchCandidate, ran
 
     let mut final_score = (weighted - penalty).clamp(0.0, 1.0);
     // require artist evidence for confidence
-    if title_score == 1.0 && duration_score >= 0.95 && source.duration_ms > 0
-        && candidate.duration_seconds > 0 && penalty == 0.0 && artist_score < 0.5
+    if title_score == 1.0
+        && duration_score >= 0.95
+        && source.duration_ms > 0
+        && candidate.duration_seconds > 0
+        && penalty == 0.0
+        && artist_score < 0.5
     {
-        final_score = final_score.max(0.76).min(0.87);
+        final_score = final_score.clamp(0.76, 0.87);
     }
     // alternate recordings require review
     if penalty > 0.0 {
@@ -207,12 +211,18 @@ pub fn artist_similarity(source_artists: &[String], target_artists: &[String]) -
 
     // compare all credited artists
     let shared_credit = if intersection > 0 { 0.9 } else { 0.0 };
-    (primary_sim * 0.7 + jaccard * 0.3).max(shared_credit).clamp(0.0, 1.0)
+    (primary_sim * 0.7 + jaccard * 0.3)
+        .max(shared_credit)
+        .clamp(0.0, 1.0)
 }
 
 fn normalize_artist(artist: &str) -> String {
     let normalized = normalize_string(artist);
-    normalized.strip_suffix(" topic").unwrap_or(&normalized).trim().to_string()
+    normalized
+        .strip_suffix(" topic")
+        .unwrap_or(&normalized)
+        .trim()
+        .to_string()
 }
 
 pub fn duration_similarity(source_ms: u64, target_secs: u64) -> f64 {
@@ -278,9 +288,16 @@ mod tests {
 
     #[test]
     fn credited_artist_order_and_topic_suffix_do_not_hide_matches() {
-        assert!(artist_similarity(&["Artist A".into(), "Artist B".into()],
-            &["Artist B - Topic".into(), "Artist A".into()]) >= 0.9);
-        assert_eq!(artist_similarity(&["Artist A".into()], &["Artist A - Topic".into()]), 1.0);
+        assert!(
+            artist_similarity(
+                &["Artist A".into(), "Artist B".into()],
+                &["Artist B - Topic".into(), "Artist A".into()]
+            ) >= 0.9
+        );
+        assert_eq!(
+            artist_similarity(&["Artist A".into()], &["Artist A - Topic".into()]),
+            1.0
+        );
         assert!(artist_similarity(&["Artist A".into()], &["Different singer".into()]) < 0.5);
     }
 

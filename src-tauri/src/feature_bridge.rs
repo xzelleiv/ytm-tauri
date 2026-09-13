@@ -53,7 +53,14 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
 
     match request.kind.as_str() {
         "get_update_status" => {
-            let response = FeatureResponse { ok: true, status: Some(200), body: serde_json::to_string(&updates::status()).ok(), headers: HashMap::new(), settings: None, error: None };
+            let response = FeatureResponse {
+                ok: true,
+                status: Some(200),
+                body: serde_json::to_string(&updates::status()).ok(),
+                headers: HashMap::new(),
+                settings: None,
+                error: None,
+            };
             send_response(window, request.id, &response);
         }
         "get_settings" => {
@@ -173,14 +180,18 @@ fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) -> Resu
         }
         "disconnect_lastfm" => {
             crate::scrobble_auth::clear_lastfm()?;
-            if let Ok(mut value) = state.settings.lock() { value.lastfm_session_key = None; }
+            if let Ok(mut value) = state.settings.lock() {
+                value.lastfm_session_key = None;
+            }
         }
         "connect_listenbrainz" => {
             crate::scrobble_auth::start_listenbrainz(state.settings.clone())?;
         }
         "disconnect_listenbrainz" => {
             crate::scrobble_auth::clear_listenbrainz()?;
-            if let Ok(mut value) = state.settings.lock() { value.listenbrainz_token = None; }
+            if let Ok(mut value) = state.settings.lock() {
+                value.listenbrainz_token = None;
+            }
         }
         "zoom_in" => {
             controls::set_zoom(app, state, 0.1);
@@ -293,12 +304,7 @@ pub fn apply_setting_update(
         }
         "lyrics_line_effect" => {
             if let Some(
-                v @ ("fancy"
-                | "scale"
-                | "offset"
-                | "focus"
-                | "cinematic"
-                | "studio"
+                v @ ("fancy" | "scale" | "offset" | "focus" | "cinematic" | "studio"
                 | "luminescent"),
             ) = value.as_str()
             {

@@ -110,13 +110,7 @@ impl Settings {
         self.playback_rate = finite_clamp(self.playback_rate, 0.25, 3.0, 1.0);
         if !matches!(
             self.lyrics_line_effect.as_str(),
-            "fancy"
-                | "scale"
-                | "offset"
-                | "focus"
-                | "cinematic"
-                | "studio"
-                | "luminescent"
+            "fancy" | "scale" | "offset" | "focus" | "cinematic" | "studio" | "luminescent"
         ) {
             self.lyrics_line_effect = "fancy".to_string();
         }

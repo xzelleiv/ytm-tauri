@@ -71,7 +71,7 @@ fn publish_status(
     *current = Some(next);
     drop(current);
     if let (Some(window), Some(payload)) = (app.get_webview_window("main"), payload) {
-        let _ = window.eval(&format!("window.__ytmUpdateStatus?.receive?.({payload});"));
+        let _ = window.eval(format!("window.__ytmUpdateStatus?.receive?.({payload});"));
     }
 }
 
@@ -220,7 +220,14 @@ async fn run_check(app: &AppHandle, settings_handle: &SharedSettings, mode: Chec
                 )
                 .await
             {
-                publish_status(app, "error", &version, "The update could not be installed. Check your connection and try again.", 0, None);
+                publish_status(
+                    app,
+                    "error",
+                    &version,
+                    "The update could not be installed. Check your connection and try again.",
+                    0,
+                    None,
+                );
                 platform::error(
                     "YouTube Music Update",
                     &format!("The signed update could not be installed: {error}"),
