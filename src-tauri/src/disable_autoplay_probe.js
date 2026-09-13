@@ -3,6 +3,8 @@
   if (!runtime) return;
 
   let active = false;
+  let boundMedia = null;
+  let mediaPollTimer = null;
 
   function onVideoEnded() {
     if (!active) return;
@@ -14,14 +16,25 @@
 
   function start() {
     active = true;
-    const media = runtime.media();
-    if (media) media.addEventListener("ended", onVideoEnded);
+    bindMedia();
+    if (mediaPollTimer) clearInterval(mediaPollTimer);
+    mediaPollTimer = setInterval(bindMedia, 1000);
   }
 
   function stop() {
     active = false;
+    if (mediaPollTimer) clearInterval(mediaPollTimer);
+    mediaPollTimer = null;
+    if (boundMedia) boundMedia.removeEventListener("ended", onVideoEnded);
+    boundMedia = null;
+  }
+
+  function bindMedia() {
     const media = runtime.media();
-    if (media) media.removeEventListener("ended", onVideoEnded);
+    if (media === boundMedia) return;
+    if (boundMedia) boundMedia.removeEventListener("ended", onVideoEnded);
+    boundMedia = media || null;
+    if (boundMedia) boundMedia.addEventListener("ended", onVideoEnded);
   }
 
   runtime.register("disable_autoplay", { start, stop });

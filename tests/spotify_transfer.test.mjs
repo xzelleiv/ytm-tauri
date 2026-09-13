@@ -89,6 +89,21 @@ function createYtmRuntime() {
   return context;
 }
 
+test("matching preserves Unicode identity and distinguishes alternate recordings", () => {
+  const score = createSpotifyRuntime().__ytmSpotify.scoreCandidate;
+  const source = { title: "夜に駆ける", artists: ["YOASOBI"], duration_ms: 240000 };
+  const candidate = (title, artists = ["YOASOBI"], duration_seconds = 240) => ({ title, artists, duration_seconds });
+  assert.equal(score(source, candidate("夜に駆ける"), 0).confidence, "high");
+  assert.notEqual(score(source, candidate("別の曲"), 0).confidence, "high");
+  assert.equal(score({ ...source, title: "!!!" }, candidate("???"), 0).score, 0);
+  assert.equal(score(source, candidate(source.title, ["Other uploader"]), 0).confidence, "review");
+  assert.notEqual(score(source, candidate(source.title + " (Live)"), 0).confidence, "high");
+  assert.equal(score(source, candidate(source.title + " (Acoustic)"), 0).review_reason, "Different recording version");
+  assert.notEqual(score(source, candidate(source.title, source.artists, 400), 0).confidence, "high");
+  assert.equal(score({ title: "Song - 2015 Remaster", artists: ["A", "B"], duration_ms: 200000 },
+    candidate("Song (Official Audio)", ["B - Topic"], 200), 0).confidence, "high");
+});
+
 test("spotify bridge serializes and resolves title requests", async () => {
   const runtime = createSpotifyRuntime();
   const promise = runtime.window.__ytmSpotify.send({ action: "get_status" });
@@ -151,7 +166,7 @@ test("ytm transfer adapter batches playlist additions into chunks of 25", async 
     calls.push({ url, body });
     return {
       ok: true,
-      json: async () => ({ actions: body.actions }),
+      json: async () => ({ status: "STATUS_SUCCEEDED", actions: body.actions }),
     };
   };
 
@@ -164,6 +179,90 @@ test("ytm transfer adapter batches playlist additions into chunks of 25", async 
   assert.equal(calls[0].body.actions.length, 25);
   assert.equal(calls[1].body.actions.length, 25);
   assert.equal(calls[2].body.actions.length, 15);
+});
+
+test("ytm transfer adapter does not replay an unconfirmed HTTP 200 batch", async () => {
+  const runtime = createYtmRuntime();
+  const adapter = runtime.window.__ytmTransferAdapter;
+  const calls = [];
+  runtime.fetch = async (url, options) => {
+    calls.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({}) };
+  };
+
+  const result = await adapter.addPlaylistItems("PL_TEST", ["vid_1", "vid_2"]);
+
+  assert.equal(result.added, 0);
+  assert.equal(result.failed, 0);
+  assert.equal(result.unknown, 2);
+  assert.equal(result.unattempted, 0);
+  assert.equal(result.complete, false);
+  assert.equal(calls.length, 1);
+});
+
+test("ytm transfer adapter does not replay a batch after an ambiguous network failure", async () => {
+  const runtime = createYtmRuntime();
+  const adapter = runtime.window.__ytmTransferAdapter;
+  let calls = 0;
+  runtime.fetch = async () => {
+    calls += 1;
+    throw new Error("connection reset");
+  };
+
+  const result = await adapter.addPlaylistItems("PL_TEST", ["vid_1", "vid_2", "vid_3"]);
+
+  assert.equal(result.added, 0);
+  assert.equal(result.failed, 0);
+  assert.equal(result.unknown, 3);
+  assert.equal(result.unattempted, 0);
+  assert.equal(result.complete, false);
+  assert.equal(calls, 1);
+});
+
+test("ytm transfer adapter stops after an ambiguous batch and reports remaining items", async () => {
+  const runtime = createYtmRuntime();
+  const adapter = runtime.window.__ytmTransferAdapter;
+  let calls = 0;
+  runtime.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 503 };
+  };
+
+  const result = await adapter.addPlaylistItems(
+    "PL_TEST",
+    Array.from({ length: 30 }, (_, i) => `vid_${i}`)
+  );
+
+  assert.equal(result.added, 0);
+  assert.equal(result.failed, 0);
+  assert.equal(result.unknown, 25);
+  assert.equal(result.unattempted, 5);
+  assert.equal(result.complete, false);
+  assert.equal(calls, 1);
+});
+
+test("ytm transfer adapter may split an explicitly rejected batch into singles", async () => {
+  const runtime = createYtmRuntime();
+  const adapter = runtime.window.__ytmTransferAdapter;
+  const calls = [];
+  runtime.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    return {
+      ok: true,
+      json: async () => ({
+        status: body.actions.length > 1 ? "STATUS_FAILED" : "STATUS_SUCCEEDED",
+      }),
+    };
+  };
+
+  const result = await adapter.addPlaylistItems("PL_TEST", ["vid_1", "vid_2"]);
+
+  assert.equal(result.added, 2);
+  assert.equal(result.failed, 0);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].actions.length, 2);
+  assert.deepEqual(calls.slice(1).map((call) => call.actions.length), [1, 1]);
 });
 
 test("spotify bridge handles session_connected event emission", () => {
@@ -183,7 +282,20 @@ test("Spotify Library remains available in the transfer navigation", () => {
   assert.doesNotMatch(spotSource, /<!-- devmode only\s*<button[^>]+data-tab="library"/);
 });
 
-test("ytm transfer adapter passes initial videoIds on createPlaylist", async () => {
+test("Spotify sign-in opens the native app-owned login window", () => {
+  assert.match(spotSource, /bridge\.send\(\{ action: "open_login" \}\)/);
+  assert.doesNotMatch(spotSource, /bridge\.send\(\{ action: "open_browser_login" \}\)/);
+});
+
+test("transfer failures stay inline and existing destinations cannot be replayed", () => {
+  assert.match(spotSource, /role="alert"/);
+  assert.match(spotSource, /Transfer paused:/);
+  assert.match(spotSource, /created_playlist_id/);
+  assert.match(spotSource, /Review it before starting another transfer/);
+  assert.doesNotMatch(spotSource, /alert\(`Transfer failed:/);
+});
+
+test("ytm playlist creation returns the created playlist id", async () => {
   const runtime = createYtmRuntime();
   const adapter = runtime.window.__ytmTransferAdapter;
 
@@ -201,7 +313,7 @@ test("ytm transfer adapter passes initial videoIds on createPlaylist", async () 
 
   assert.equal(playlistId, "PL_CREATED_123");
   assert.equal(capturedPayload.title, "My Spotify Mix");
-  assert.deepEqual(capturedPayload.videoIds, initialIds);
+  assert.equal(capturedPayload.privacyStatus, "PRIVATE");
 });
 
 test("getSortedReviewTracks correctly orders by review, confident, and original", async () => {
@@ -263,3 +375,30 @@ test("getSortedReviewTracks correctly orders by review, confident, and original"
   );
 });
 
+
+
+test("playlist creation strips Spotify HTML and validates fields before sending", async () => {
+  const runtime = createYtmRuntime();
+  let calls = 0;
+  runtime.fetch = async (_url, options) => {
+    calls++;
+    const body = JSON.parse(options.body);
+    assert.equal(body.title, "Melancholy Mix");
+    assert.equal(body.description, 'Songs by Artist & friends.\n"Chill"');
+    assert.equal(body.privacyStatus, "PRIVATE");
+    return { ok: true, json: async () => ({ playlistId: "PL-new" }) };
+  };
+  const api = runtime.window.__ytmTransferAdapter;
+  assert.equal(await api.createPlaylist(" Melancholy Mix ", 'Songs by <a href="https://spotify.com/artist">Artist</a> &amp; friends.<br>&quot;Chill&quot;', "private"), "PL-new");
+  await assert.rejects(api.createPlaylist("Bad <title>"), /title without/);
+  await assert.rejects(api.createPlaylist("Fine", "", "unknown"), /privacy/);
+  assert.equal(calls, 1);
+});
+
+test("playlist HTTP 400 identifies creation and never retries an uncertain mutation", async () => {
+  const runtime = createYtmRuntime();
+  let calls = 0;
+  runtime.fetch = async () => { calls++; return { ok: false, status: 400 }; };
+  await assert.rejects(runtime.window.__ytmTransferAdapter.createPlaylist("Mix"), /create the playlist \(HTTP 400\)/);
+  assert.equal(calls, 1);
+});

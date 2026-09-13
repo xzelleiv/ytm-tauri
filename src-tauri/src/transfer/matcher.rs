@@ -28,7 +28,17 @@ pub fn score_candidate(source: &SourceTrack, candidate: &mut MatchCandidate, ran
         + (type_score * 0.05)
         + (rank_score * 0.05);
 
-    let final_score = (weighted - penalty).clamp(0.0, 1.0);
+    let mut final_score = (weighted - penalty).clamp(0.0, 1.0);
+    // require artist evidence for confidence
+    if title_score == 1.0 && duration_score >= 0.95 && source.duration_ms > 0
+        && candidate.duration_seconds > 0 && penalty == 0.0 && artist_score < 0.5
+    {
+        final_score = final_score.max(0.76).min(0.87);
+    }
+    // alternate recordings require review
+    if penalty > 0.0 {
+        final_score = final_score.min(0.87);
+    }
     candidate.score = final_score;
     candidate.confidence = if final_score >= 0.88 {
         MatchConfidence::High
@@ -142,6 +152,11 @@ pub fn title_similarity(source_title: &str, target_title: &str) -> f64 {
     let s_norm = normalize_string(source_title);
     let t_norm = normalize_string(target_title);
 
+    // reject empty normalized metadata
+    if s_norm.is_empty() || t_norm.is_empty() {
+        return 0.0;
+    }
+
     if s_norm == t_norm {
         return 1.0;
     }
@@ -163,12 +178,24 @@ pub fn artist_similarity(source_artists: &[String], target_artists: &[String]) -
         return 0.0;
     }
 
-    let s_primary = normalize_string(&source_artists[0]);
-    let t_primary = normalize_string(&target_artists[0]);
-    let primary_sim = dice_coefficient(&s_primary, &t_primary);
+    let s_primary = normalize_artist(&source_artists[0]);
+    let t_primary = normalize_artist(&target_artists[0]);
+    let primary_sim = if s_primary.is_empty() || t_primary.is_empty() {
+        0.0
+    } else {
+        dice_coefficient(&s_primary, &t_primary)
+    };
 
-    let s_set: HashSet<String> = source_artists.iter().map(|a| normalize_string(a)).collect();
-    let t_set: HashSet<String> = target_artists.iter().map(|a| normalize_string(a)).collect();
+    let s_set: HashSet<String> = source_artists
+        .iter()
+        .map(|a| normalize_artist(a))
+        .filter(|a| !a.is_empty())
+        .collect();
+    let t_set: HashSet<String> = target_artists
+        .iter()
+        .map(|a| normalize_artist(a))
+        .filter(|a| !a.is_empty())
+        .collect();
 
     let intersection = s_set.intersection(&t_set).count();
     let union = s_set.union(&t_set).count();
@@ -178,7 +205,14 @@ pub fn artist_similarity(source_artists: &[String], target_artists: &[String]) -
         intersection as f64 / union as f64
     };
 
-    (primary_sim * 0.7 + jaccard * 0.3).clamp(0.0, 1.0)
+    // compare all credited artists
+    let shared_credit = if intersection > 0 { 0.9 } else { 0.0 };
+    (primary_sim * 0.7 + jaccard * 0.3).max(shared_credit).clamp(0.0, 1.0)
+}
+
+fn normalize_artist(artist: &str) -> String {
+    let normalized = normalize_string(artist);
+    normalized.strip_suffix(" topic").unwrap_or(&normalized).trim().to_string()
 }
 
 pub fn duration_similarity(source_ms: u64, target_secs: u64) -> f64 {
@@ -210,7 +244,6 @@ const VARIANT_TAGS: &[&str] = &[
     "slowed",
     "instrumental",
     "remaster",
-    "remastered",
     "demo",
     "cover",
     "nightcore",
@@ -220,10 +253,11 @@ const VARIANT_TAGS: &[&str] = &[
 ];
 
 pub fn extract_variant_tags(title: &str) -> HashSet<&'static str> {
-    let lower = title.to_lowercase();
+    let normalized = normalize_string(title).replace("remastered", "remaster");
+    let lower = format!(" {normalized} ");
     let mut tags = HashSet::new();
     for &tag in VARIANT_TAGS {
-        if lower.contains(tag) {
+        if lower.contains(&format!(" {tag} ")) {
             tags.insert(tag);
         }
     }
@@ -241,6 +275,21 @@ pub fn variant_penalty(source_title: &str, target_title: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credited_artist_order_and_topic_suffix_do_not_hide_matches() {
+        assert!(artist_similarity(&["Artist A".into(), "Artist B".into()],
+            &["Artist B - Topic".into(), "Artist A".into()]) >= 0.9);
+        assert_eq!(artist_similarity(&["Artist A".into()], &["Artist A - Topic".into()]), 1.0);
+        assert!(artist_similarity(&["Artist A".into()], &["Different singer".into()]) < 0.5);
+    }
+
+    #[test]
+    fn variant_words_do_not_match_inside_song_names() {
+        assert!(extract_variant_tags("Alive and Discovered").is_empty());
+        assert!(extract_variant_tags("Song (Live)").contains("live"));
+        assert!(extract_variant_tags("Song - 2024 Remastered").contains("remaster"));
+    }
 
     #[test]
     fn perfect_match_scores_high() {
@@ -306,5 +355,17 @@ mod tests {
             clean_search_query("Solomon - 2022 Remaster", &artists),
             "munimuni solomon"
         );
+    }
+
+    #[test]
+    fn remastered_is_not_penalized_as_two_variants() {
+        assert_eq!(variant_penalty("Song (Remastered)", "Song"), 0.12);
+        assert_eq!(variant_penalty("Song (Remaster)", "Song (Remastered)"), 0.0);
+    }
+
+    #[test]
+    fn punctuation_only_metadata_does_not_match() {
+        assert_eq!(title_similarity("---", "..."), 0.0);
+        assert_eq!(artist_similarity(&["---".into()], &["...".into()]), 0.0);
     }
 }

@@ -3,7 +3,8 @@
   if (!runtime) return;
 
   let observer = null;
-  let waitTimer = 0;
+  let boundButton = null;
+  let buttonPollTimer = 0;
 
   function skipIfDisliked(button) {
     if (button?.getAttribute("like-status") !== "DISLIKE") return;
@@ -12,22 +13,31 @@
 
   function attach() {
     const button = document.querySelector("#like-button-renderer");
-    if (!button) {
-      waitTimer = window.setTimeout(attach, 250);
-      return;
-    }
+    if (button === boundButton) return;
     observer?.disconnect();
-    observer = new MutationObserver(() => skipIfDisliked(button));
-    observer.observe(button, { attributes: true, attributeFilter: ["like-status"] });
-    skipIfDisliked(button);
+    observer = null;
+    boundButton = button || null;
+    if (button) {
+      const mutationObserver = new MutationObserver(() => skipIfDisliked(button));
+      mutationObserver.observe(button, { attributes: true, attributeFilter: ["like-status"] });
+      observer = mutationObserver;
+      skipIfDisliked(button);
+    }
   }
 
   function stop() {
     observer?.disconnect();
     observer = null;
-    window.clearTimeout(waitTimer);
-    waitTimer = 0;
+    boundButton = null;
+    window.clearInterval(buttonPollTimer);
+    buttonPollTimer = 0;
   }
 
-  runtime.register("skip_disliked", { start: attach, stop });
+  function start() {
+    attach();
+    window.clearInterval(buttonPollTimer);
+    buttonPollTimer = window.setInterval(attach, 1000);
+  }
+
+  runtime.register("skip_disliked", { start, stop });
 })();

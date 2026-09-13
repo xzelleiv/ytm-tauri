@@ -16,7 +16,7 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 base64 = "0.22.1"
-discord-rich-presence = { git = "https://github.com/vionya/discord-rich-presence" }
+discord-rich-presence = { git = "https://github.com/vionya/discord-rich-presence", rev = "4311c894bbfcefda0fb682262cdd2098ff82490a" }
 md5 = "0.8.1"
 rand = "0.8.5"
 regex = "1"

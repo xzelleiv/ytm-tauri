@@ -52,6 +52,10 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
     };
 
     match request.kind.as_str() {
+        "get_update_status" => {
+            let response = FeatureResponse { ok: true, status: Some(200), body: serde_json::to_string(&updates::status()).ok(), headers: HashMap::new(), settings: None, error: None };
+            send_response(window, request.id, &response);
+        }
         "get_settings" => {
             let current = sanitize_settings(settings::snapshot(&state.settings));
             let response = FeatureResponse {
@@ -105,16 +109,19 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
             send_response(window, request.id, &response);
         }
         "action" => {
-            if let Some(action) = &request.action {
-                handle_action(window, action, state);
-            }
+            let action_result = request
+                .action
+                .as_deref()
+                .map(|action| handle_action(window, action, state));
+            let action_ok = action_result.as_ref().map_or(true, Result::is_ok);
+            let action_error = action_result.and_then(Result::err);
             let response = FeatureResponse {
-                ok: true,
-                status: Some(200),
+                ok: action_ok,
+                status: Some(if action_ok { 200 } else { 500 }),
                 body: None,
                 headers: HashMap::new(),
                 settings: Some(sanitize_settings(settings::snapshot(&state.settings))),
-                error: None,
+                error: action_error,
             };
             send_response(window, request.id, &response);
         }
@@ -149,7 +156,7 @@ fn send_response(window: &WebviewWindow, id: u64, response: &FeatureResponse) {
     });
 }
 
-fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) {
+fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) -> Result<(), String> {
     let app = window.app_handle();
     match action {
         "check_updates" => {
@@ -160,6 +167,20 @@ fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) {
         }
         "reset_session" => {
             controls::reset_session(app, state);
+        }
+        "connect_lastfm" => {
+            crate::scrobble_auth::start_lastfm(state.settings.clone())?;
+        }
+        "disconnect_lastfm" => {
+            crate::scrobble_auth::clear_lastfm()?;
+            if let Ok(mut value) = state.settings.lock() { value.lastfm_session_key = None; }
+        }
+        "connect_listenbrainz" => {
+            crate::scrobble_auth::start_listenbrainz(state.settings.clone())?;
+        }
+        "disconnect_listenbrainz" => {
+            crate::scrobble_auth::clear_listenbrainz()?;
+            if let Ok(mut value) = state.settings.lock() { value.listenbrainz_token = None; }
         }
         "zoom_in" => {
             controls::set_zoom(app, state, 0.1);
@@ -174,13 +195,16 @@ fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) {
             window.open_devtools();
         }
         "open_github" => {
-            crate::platform::open_url("https://github.com/xzelleiv/ytm-tauri");
+            if !crate::platform::open_url("https://github.com/xzelleiv/ytm-tauri") {
+                return Err("could not open the GitHub page".to_string());
+            }
         }
         "force_close" | "exit_app" | "quit_app" => {
             std::process::exit(0);
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn sanitize_settings(mut s: settings::Settings) -> settings::Settings {
@@ -288,19 +312,11 @@ pub fn apply_setting_update(
                 return true;
             }
         }
-        "lastfm_session_key" => {
-            settings.lastfm_session_key = value.as_str().map(|s| s.to_string());
-            return true;
-        }
         "listenbrainz_scrobbling" => {
             if let Some(v) = value.as_bool() {
                 settings.listenbrainz_scrobbling = v;
                 return true;
             }
-        }
-        "listenbrainz_token" => {
-            settings.listenbrainz_token = value.as_str().map(|s| s.to_string());
-            return true;
         }
         "notifications" => {
             if let Some(v) = value.as_bool() {

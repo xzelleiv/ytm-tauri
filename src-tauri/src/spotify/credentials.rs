@@ -63,7 +63,7 @@ fn session_file_path() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
         let in_blob = CRYPT_INTEGER_BLOB {
             cbData: data.len() as u32,
@@ -91,7 +91,7 @@ fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-fn decrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn decrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
         let in_blob = CRYPT_INTEGER_BLOB {
             cbData: data.len() as u32,

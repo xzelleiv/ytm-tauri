@@ -13,15 +13,15 @@ This app gives YouTube Music its own dedicated Windows window, keeps your normal
 
 - Windows only.
 - Unofficial project, not affiliated with YouTube, Google, Discord, Microsoft, or Tauri.
-- Current release: [`v0.2.3`](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.3).
+- Current release: [`v0.2.5`](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.5).
 
 ## Download
 
 Use the NSIS setup installer for normal installs:
 
-[Download `YouTube.Music_0.2.3_x64-setup.exe`](https://github.com/xzelleiv/ytm-tauri/releases/download/v0.2.3/YouTube.Music_0.2.3_x64-setup.exe)
+[Download `YouTube.Music_0.2.5_x64-setup.exe`](https://github.com/xzelleiv/ytm-tauri/releases/download/v0.2.5/YouTube.Music_0.2.5_x64-setup.exe)
 
-An MSI package is also available on the [release page](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.3).
+An MSI package is also available on the [release page](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.5).
 
 > Windows may show an “Unknown publisher” notice because this community release is not code-signed.
 
@@ -29,6 +29,7 @@ An MSI package is also available on the [release page](https://github.com/xzelle
 
 - Dedicated Windows app window for YouTube Music.
 - Built-in Spotify to YouTube Music playlist transfer (public links, Liked Songs, private playlists, and CSV/text import).
+- Playlist manager with full-playlist search, focused review filters, range selection, saved sorting, precise song positioning, and bulk copy, move, or removal.
 - Persistent Discord RPC and ad-block toggles with live status.
 - Persistent YouTube login/session through the app WebView profile.
 - Built-in ad blocking with native request filtering, blocked-request count, and page-side cleanup.
@@ -36,7 +37,7 @@ An MSI package is also available on the [release page](https://github.com/xzelle
 - Reload, zoom, cache clear, and session reset controls.
 - Optional close-to-tray, launch at startup, and start minimized behavior.
 - External links open in the default browser.
-- Automatic and manual GitHub release checks.
+- Automatic and manual update checks, with download progress in Settings and signature verification before installation.
 - Left-hand global playback shortcuts.
 
 YouTube Music's WebView profile retains login, volume, window state, and site preferences.
@@ -44,10 +45,35 @@ YouTube Music's WebView profile retains login, volume, window state, and site pr
 ## Screenshots
 
 <details open>
+<summary>Playlist manager · organize, copy, and clean up</summary>
+<br>
+<p align="center">
+  <img src="screenshots/playlist-manager.png" alt="Playlist manager with full-playlist search, bulk selection, and a private destination playlist picker" width="95%" />
+</p>
+<p align="center"><em>Search the entire playlist, review extra copies, and choose where selected songs go.</em></p>
+<p align="center">
+  <img src="screenshots/playlist-manager-entry.png" alt="Manage playlist button above the YouTube Music song list" width="85%" />
+  <br><em>Open the manager directly from the playlist page.</em>
+</p>
+<p align="center">
+  <img src="screenshots/playlist-manager-duplicates.png" alt="Duplicate filter showing one extra copy while keeping the first song entry" width="95%" />
+  <br><em>Review extra copies without selecting the original entry.</em>
+</p>
+</details>
+
+<details open>
 <summary>Spotify to YouTube Music Transfer</summary>
 <br>
 <p align="center">
-  <img src="screenshots/spotify-transfer-review.png" alt="Spotify Transfer Review" width="85%" />
+  <img src="screenshots/spotify-transfer-library.png" alt="Connected Spotify account with its username and searchable playlist library" width="85%" />
+  <br><em>Your connected Spotify account and playlist library, available inside the app.</em>
+</p>
+<p align="center">
+  <img src="screenshots/spotify-transfer-review.png" alt="Spotify match review with confidence scores, recording-version warnings, and a skip threshold" width="85%" />
+  <br><em>Review match confidence and recording versions, then skip songs below your chosen threshold.</em>
+</p>
+<p align="center">
+  <img src="screenshots/spotify-transfer-matching.png" alt="Matching 1,251 Spotify Liked Songs to YouTube Music" width="85%" />
 </p>
 <p align="center">
   <img src="screenshots/spotify-transfer-playlist.png" alt="Created YouTube Music Playlist" width="85%" />
@@ -67,6 +93,7 @@ YouTube Music's WebView profile retains login, volume, window state, and site pr
 
 ## Shortcuts
 
+- `Ctrl+H`: show keyboard shortcuts without leaving the player.
 - `Ctrl+Alt+A`: previous track.
 - `Ctrl+Alt+S`: play or pause.
 - `Ctrl+Alt+D`: next track.
@@ -149,17 +176,33 @@ When the blocker is wired correctly, the window title briefly becomes `ADBLOCK_S
 
 ### Spotify Library Sign-In
 
-The Spotify transfer dialog can read Liked Songs and private playlists through either:
+Open **Spotify Transfer → Spotify Library → Sign in with Spotify** to use the built-in login. After connecting, select **Liked Songs** or a playlist. Authenticated imports fetch successive pages, including libraries larger than 100 songs; public embed links can still return only a preview.
 
-- A dedicated incognito WebView2 sign-in window. The native host reads the HttpOnly `sp_dc` cookie and immediately closes the temporary auth windows.
-- Browser OAuth with PKCE. Register `http://127.0.0.1/callback` as a loopback redirect URI in the Spotify developer dashboard, then provide the public client ID when building or launching the app:
+The dedicated incognito WebView2 window opens Spotify's own sign-in page. The native host reads its HttpOnly `sp_dc` cookie, stores the session encrypted for the current Windows user with DPAPI, and closes the temporary sign-in windows after accepting the session. No Spotify client ID, client secret, or manual cookie copying is required for this flow. Chrome's existing login is separate from the app's sign-in window.
 
-```powershell
-$env:YTM_SPOTIFY_CLIENT_ID = "your_public_spotify_client_id"
-npm run dev
-```
+The native backend also retains its optional browser OAuth/PKCE integration for developers configuring `YTM_SPOTIFY_CLIENT_ID`; the standard sign-in button uses the built-in window.
 
-No Spotify client secret is embedded in the desktop app. If a client ID is not configured, the browser button opens a localhost-only helper for manually submitting a web access token or `sp_dc` value. Stored Spotify credentials are encrypted for the current Windows user with DPAPI.
+Cookie-based sessions read Spotify's Web Player library endpoints. These private endpoints and their persisted query hashes can change; unsupported responses produce an error rather than an apparently complete 100-song import. Spotify rate limits are reported with a cooldown before another request.
+
+Matching uses a small pool of concurrent searches and reuses duplicate queries. Weak results receive a broader search; differing artist credits and alternate recordings remain available for review. In the review screen, **Auto Skip** offers 70%, 60%, 50%, or a custom threshold. Skipping a song preserves the current scroll position.
+
+### Playlist Manager
+
+Organize large playlists without endless scrolling. **Manage playlist** opens beside Sort, or above the song list on other layouts. Browse album artwork, search every song, and make reviewed bulk changes—including transfers to private playlists.
+
+- **Find and select:** search titles, artists, or albums. Select all songs across every page, select filtered results, or Shift-click a range. Filters keep selections intact.
+- **Clean up:** select extra copies of the same video while keeping the first, or review songs explicitly marked unavailable by YouTube Music.
+- **Copy or move:** search your signed-in playlists by name. The preview reports how many selected songs already exist in the destination and skips them. No share link needed.
+- **Arrange:** sort the view by title, artist, album, duration, or original order. Save the whole sort order, or move selected songs to a numbered position while preserving their relative order.
+- **Review and confirm:** inspect counts and the destination before saving. Copies and removals use batches of up to 25. Moves remove source entries only after the destination batch succeeds; songs skipped as already present stay in the source.
+
+Destination checks are reused while selecting songs and refreshed before saving. If the destination changed, review the revised counts again. Interrupted or unconfirmed batches stop without automatic retries; the interface reports the error and preserves unfinished selections for review. Song artwork comes from YouTube Music; custom playlist cover images are not transferred.
+
+Screenshots show the app in use. Automated checks cover representative responses and simulated writes; they do not clean up user playlists.
+
+### App updates
+
+Open **Settings → System → App updates** to check for a new version. Downloads run inside the app after confirmation. The update card shows downloaded size and progress, then verification and installation status. Closing Settings does not interrupt the download. If an update fails, reopen this card to retry.
 
 ### Security Notes
 

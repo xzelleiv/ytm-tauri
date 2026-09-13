@@ -13,6 +13,38 @@
   let isOpen = false;
   let activeTab = "general";
 
+  let updateStatus = { revision: -1, stage: "idle", version: "0.2.5", message: "Check for a newer version of YouTube Music.", downloaded: 0, total: null };
+
+  function renderUpdateStatus() {
+    const card = document.getElementById("ytm-update-card");
+    if (!card) return;
+    const busy = ["checking", "downloading", "installing"].includes(updateStatus.stage);
+    card.querySelector("[data-update=version]").textContent = `${updateStatus.stage === "available" || updateStatus.stage === "downloading" || updateStatus.stage === "installing" ? "Update" : "Version"} ${updateStatus.version}`;
+    const message = card.querySelector("[data-update=message]");
+    message.textContent = updateStatus.message;
+    message.style.color = updateStatus.stage === "error" ? "#ff8a80" : "";
+    const button = card.querySelector("button");
+    button.disabled = busy;
+    button.textContent = { checking: "Checking…", downloading: "Downloading…", installing: "Installing…", available: "Download & install", error: "Try again" }[updateStatus.stage] || "Check now";
+    const progress = card.querySelector("progress");
+    progress.hidden = !["downloading", "installing"].includes(updateStatus.stage);
+    const total = Number(updateStatus.total);
+    const downloaded = Math.max(0, Number(updateStatus.downloaded) || 0);
+    if (total > 0 && updateStatus.stage === "downloading") progress.value = Math.min(100, downloaded / total * 100);
+    else progress.removeAttribute("value");
+    const detail = card.querySelector("[data-update=bytes]");
+    detail.textContent = updateStatus.stage === "downloading" && downloaded > 0
+      ? `${(downloaded / 1048576).toFixed(1)} MB${total > 0 ? ` of ${(total / 1048576).toFixed(1)} MB · ${Math.min(100, Math.floor(downloaded / total * 100))}%` : " downloaded"}` : "";
+  }
+
+  window.__ytmUpdateStatus = {
+    receive(next) {
+      if (!next || !Number.isSafeInteger(next.revision) || next.revision < updateStatus.revision) return;
+      updateStatus = next;
+      renderUpdateStatus();
+    },
+  };
+
   let ttPolicy = null;
   try {
     if (window.trustedTypes) {
@@ -926,7 +958,19 @@
     `);
     const group = document.createElement("div");
     group.className = "ytm-card-group";
+    const config = getConfig();
+    const lastfmConnected = Boolean(config.lastfm_connected);
+    const listenbrainzConnected = Boolean(config.listenbrainz_connected);
+    const connectCard = (id, title, summary, connected, connectAction, disconnectAction) => {
+      const card = document.createElement("div");
+      card.className = "ytm-settings-card";
+      setHTML(card, `<div class="ytm-card-details"><div class="ytm-card-name">${title}</div><div class="ytm-card-summary">${summary}</div></div><button class="ytm-action-btn ${connected ? "" : "ytm-action-btn-primary"}" id="${id}">${connected ? "Disconnect" : "Connect"}</button>`);
+      card.querySelector("button")?.addEventListener("click", () => triggerAction(connected ? disconnectAction : connectAction));
+      return card;
+    };
+    group.appendChild(connectCard("ytm-connect-lastfm", "Last.fm Account", lastfmConnected ? "Connected. Credentials are protected by Windows account encryption." : "Connect with your Last.fm application key and secret.", lastfmConnected, "connect_lastfm", "disconnect_lastfm"));
     group.appendChild(createToggle("lastfm_scrobbling", "Last.fm Scrobbler", "Automatically log played songs to your Last.fm profile.", false));
+    group.appendChild(connectCard("ytm-connect-listenbrainz", "ListenBrainz Account", listenbrainzConnected ? "Connected. Your token is protected by Windows account encryption." : "Connect with a ListenBrainz user token.", listenbrainzConnected, "connect_listenbrainz", "disconnect_listenbrainz"));
     group.appendChild(createToggle("listenbrainz_scrobbling", "ListenBrainz Scrobbler", "Submit listens to open-source ListenBrainz music archive.", false));
 
     container.appendChild(group);
@@ -960,14 +1004,27 @@
     // check updates
     const updateCard = document.createElement("div");
     updateCard.className = "ytm-settings-card";
+    updateCard.id = "ytm-update-card";
+    updateCard.style.alignItems = "flex-start";
     setHTML(updateCard, `
       <div class="ytm-card-details">
-        <div class="ytm-card-name">Check for Updates</div>
-        <div class="ytm-card-summary">Query GitHub releases for the latest desktop build.</div>
+        <div class="ytm-card-name">App updates <span data-update="version" style="font-size:12px;color:#aaa;font-weight:400;margin-left:8px"></span></div>
+        <div class="ytm-card-summary" data-update="message" role="status" aria-live="polite"></div>
+        <progress max="100" aria-label="Update download progress" style="width:100%;height:6px;accent-color:#fff;margin-top:14px" hidden></progress>
+        <div data-update="bytes" style="font-size:12px;color:#aaa;margin-top:6px"></div>
       </div>
       <button class="ytm-action-btn ytm-action-btn-primary" id="ytm-act-update">Check Now</button>
     `);
-    updateCard.querySelector("#ytm-act-update")?.addEventListener("click", () => triggerAction("check_updates"));
+    updateCard.querySelector("#ytm-act-update")?.addEventListener("click", async () => {
+      const button = updateCard.querySelector("button");
+      button.disabled = true;
+      try {
+        if (!window.__ytmFeatures?.triggerAction) throw new Error("Update service unavailable");
+        await window.__ytmFeatures.triggerAction("check_updates");
+      } catch {
+        updateStatus = { ...updateStatus, stage: "error", message: "Could not reach the update service. Try again." };
+      } finally { renderUpdateStatus(); }
+    });
     group.appendChild(updateCard);
 
     // clear cache
@@ -997,6 +1054,10 @@
     group.appendChild(resetCard);
 
     container.appendChild(group);
+    renderUpdateStatus();
+    window.__ytmFeatures?.getUpdateStatus?.().then((response) => {
+      if (response?.ok && response.body) window.__ytmUpdateStatus.receive(JSON.parse(response.body));
+    }).catch(() => {});
   }
 
   function renderModal() {

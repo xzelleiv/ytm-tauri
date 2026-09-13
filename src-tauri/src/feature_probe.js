@@ -56,6 +56,13 @@
         window.dispatchEvent(new CustomEvent("ytm-settings-changed", { detail: { ...config } }));
       } catch {}
     },
+    getUpdateStatus() {
+      const id = ++requestId;
+      return new Promise((resolve, reject) => {
+        queue.push({ id, message: { id, kind: "get_update_status" }, resolve, reject });
+        flushQueue();
+      });
+    },
     getSettings() {
       const id = ++requestId;
       const message = { id, kind: "get_settings" };

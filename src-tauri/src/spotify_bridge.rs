@@ -103,6 +103,9 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
                 ..Default::default()
             };
             send_response(window, req.id, &resp);
+            if is_auth {
+                state.spotify.refresh_profile(window.app_handle());
+            }
         }
         "open_login" => {
             let app = window.app_handle().clone();
@@ -165,21 +168,17 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
             let req_id = req.id;
 
             thread::spawn(move || {
-                let token = match controller.get_token() {
-                    Ok(token) => token,
-                    Err(error) => {
-                        let resp = SpotifyBridgeResponse {
-                            ok: false,
-                            error: Some(error),
-                            is_authenticated: Some(false),
-                            ..Default::default()
-                        };
-                        send_response(&window_clone, req_id, &resp);
-                        return;
-                    }
+                let result = if controller.is_cookie_session() {
+                    controller
+                        .get_web_player()
+                        .and_then(|web| client::fetch_user_playlists_web(&web))
+                } else {
+                    controller
+                        .get_token()
+                        .and_then(|token| client::fetch_user_playlists(&token, user_id.as_deref()))
                 };
 
-                match client::fetch_user_playlists(&token, user_id.as_deref()) {
+                match result {
                     Ok(playlists) => {
                         let resp = SpotifyBridgeResponse {
                             ok: true,
@@ -213,22 +212,17 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
                     || link_str.contains("collection/tracks")
                     || link_str.contains("collection%2Ftracks")
                 {
-                    let token = match controller.get_token() {
-                        Ok(token) => token,
-                        Err(_) => {
-                            let resp = SpotifyBridgeResponse {
-                                ok: false,
-                                error: Some(
-                                    "Please connect Spotify to access Liked Songs".to_string(),
-                                ),
-                                ..Default::default()
-                            };
-                            send_response(&window_clone, req_id, &resp);
-                            return;
-                        }
+                    let result = if controller.is_cookie_session() {
+                        controller
+                            .get_web_player()
+                            .and_then(|web| client::fetch_all_liked_songs_web(&web, |_, _| {}))
+                    } else {
+                        controller
+                            .get_token()
+                            .and_then(|token| client::fetch_all_liked_songs(&token, |_, _| {}))
                     };
 
-                    match client::fetch_all_liked_songs(&token, |_, _| {}) {
+                    match result {
                         Ok(tracks) => {
                             let playlist = SpotifyPlaylist {
                                 id: "liked_songs".to_string(),
@@ -277,20 +271,41 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
 
                 // try user playlist
                 if let SpotifyLinkType::Playlist(pid) = &parsed_link {
-                    if let Ok(token) = controller.get_token() {
-                        if let Ok((playlist, tracks)) =
-                            client::fetch_playlist_items(&token, pid, |_, _| {})
-                        {
-                            let resp = SpotifyBridgeResponse {
-                                ok: true,
-                                is_authenticated: Some(true),
-                                playlist: Some(playlist),
-                                tracks: Some(tracks),
-                                ..Default::default()
-                            };
-                            send_response(&window_clone, req_id, &resp);
-                            return;
+                    // never silently truncate authenticated imports
+                    if controller.is_authenticated() {
+                        let result = if controller.is_cookie_session() {
+                            controller.get_web_player().and_then(|web| {
+                                client::fetch_playlist_items_web(&web, pid, |_, _| {})
+                            })
+                        } else {
+                            controller.get_token().and_then(|token| {
+                                client::fetch_playlist_items(&token, pid, |_, _| {})
+                            })
+                        };
+                        match result {
+                            Ok((playlist, tracks)) => {
+                                let resp = SpotifyBridgeResponse {
+                                    ok: true,
+                                    is_authenticated: Some(true),
+                                    playlist: Some(playlist),
+                                    tracks: Some(tracks),
+                                    ..Default::default()
+                                };
+                                send_response(&window_clone, req_id, &resp);
+                            }
+                            Err(error) => {
+                                let resp = SpotifyBridgeResponse {
+                                    ok: false,
+                                    is_authenticated: Some(true),
+                                    error: Some(format!(
+                                        "Authenticated Spotify playlist fetch failed; refusing an incomplete anonymous preview: {error}"
+                                    )),
+                                    ..Default::default()
+                                };
+                                send_response(&window_clone, req_id, &resp);
+                            }
                         }
+                        return;
                     }
                 }
 

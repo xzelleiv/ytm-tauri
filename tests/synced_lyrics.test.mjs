@@ -271,9 +271,10 @@ test("parseRetryAfter handles integer seconds and HTTP Date strings with bounds"
 
   assert.equal(plugin.parseRetryAfter("120"), 120);
   assert.equal(plugin.parseRetryAfter("10"), 10);
-  assert.equal(plugin.parseRetryAfter("1000"), 300); // clamped to 300
-  assert.equal(plugin.parseRetryAfter(null), 60); // default
-  assert.equal(plugin.parseRetryAfter("invalid"), 60); // default on invalid
+  assert.equal(plugin.parseRetryAfter("1000"), 1000);
+  assert.equal(plugin.parseRetryAfter("100000"), 86400);
+  assert.equal(plugin.parseRetryAfter(null), 60);
+  assert.equal(plugin.parseRetryAfter("invalid"), 60);
 
   const future = new Date(Date.now() + 45000).toUTCString();
   const diff = plugin.parseRetryAfter(future);
@@ -340,6 +341,7 @@ test("parseLrc parses flexible timestamps and strips inline section headers", ()
   assert.equal(parsed.lines[3].text, "Integer seconds");
   assert.equal(parsed.lines[4].timeInMs, 40500);
   assert.equal(parsed.lines[4].text, "Colon subseconds");
+  assert.equal(parsed.lines[4].duration, 3000);
 });
 
 test("renderPlain sanitizes metadata headers and leading timestamps", () => {
@@ -381,6 +383,14 @@ test("fetchLrcLib aborts immediately when signal is aborted", async () => {
   const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 0, controller.signal);
   assert.equal(res, null);
   assert.equal(fetchCalled, false);
+});
+
+test("LRCLIB candidate matching rejects a different duration/version", () => {
+  const { features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+  const info = { title: "Song", artist: "Artist", songDuration: 180 };
+  assert.ok(plugin.scoreCandidate("Artist", "Song", 181, info) > 0);
+  assert.equal(plugin.scoreCandidate("Artist", "Song", 190, info), -1);
 });
 
 test("lyrics effects apply dataset attribute for all 7 presets", () => {

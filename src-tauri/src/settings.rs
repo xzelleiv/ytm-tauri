@@ -22,8 +22,10 @@ pub struct Settings {
     pub lyrics_auto_sync: bool,
     pub lyrics_line_effect: String,
     pub lastfm_scrobbling: bool,
+    #[serde(skip)]
     pub lastfm_session_key: Option<String>,
     pub listenbrainz_scrobbling: bool,
+    #[serde(skip)]
     pub listenbrainz_token: Option<String>,
     pub notifications: bool,
     pub windows_media_controls: bool,
@@ -290,5 +292,17 @@ mod tests {
             settings.normalize();
             assert_eq!(settings.lyrics_line_effect, effect);
         }
+    }
+
+    #[test]
+    fn scrobble_secrets_never_serialize_into_settings() {
+        let settings = Settings {
+            lastfm_session_key: Some("lastfm-secret".to_string()),
+            listenbrainz_token: Some("listenbrainz-secret".to_string()),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).expect("settings json");
+        assert!(!json.contains("lastfm-secret"));
+        assert!(!json.contains("listenbrainz-secret"));
     }
 }

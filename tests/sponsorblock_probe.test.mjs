@@ -148,3 +148,53 @@ test("sponsorblock uses in-memory cache on repeat calls", async () => {
   assert.equal(fetchCount, 1);
   env.registered.sponsorblock.stop();
 });
+
+test("sponsorblock caches empty segments on 404", async () => {
+  let fetchCount = 0;
+  const env = createSponsorBlockEnv({
+    fetchMock: async () => {
+      fetchCount += 1;
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      };
+    },
+  });
+
+  env.registered.sponsorblock.start();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(fetchCount, 1);
+
+  env.registered.sponsorblock.stop();
+  env.registered.sponsorblock.start();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(fetchCount, 1);
+  env.registered.sponsorblock.stop();
+});
+
+test("sponsorblock does not cache transient server errors", async () => {
+  let fetchCount = 0;
+  const env = createSponsorBlockEnv({
+    fetchMock: async () => {
+      fetchCount += 1;
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "internal server error" }),
+      };
+    },
+  });
+
+  env.registered.sponsorblock.start();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(fetchCount, 1);
+
+  env.registered.sponsorblock.stop();
+  env.registered.sponsorblock.start();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(fetchCount, 2);
+  env.registered.sponsorblock.stop();
+});

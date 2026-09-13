@@ -1045,7 +1045,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
       // recover aborted fetch
       for (const name of PROVIDERS) {
         const p = entry.providers[name];
-        if (!p || p.state === "idle") {
+        if (!p || p.state === "idle" || (p.state === "fetching" && p.epoch !== epoch)) {
           fetchProvider(name, info, entry, epoch, signal);
         }
       }
@@ -1056,8 +1056,15 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
   async function fetchProvider(name, info, entry, epoch = currentTrackEpoch, signal = null) {
     const provider = entry.providers[name];
     if (provider.state === "fetching" || (provider.state === "done" && provider.data)) {
-      return;
+      if (provider.state === "fetching" && provider.epoch !== epoch) {
+        provider.state = "idle";
+      } else {
+        return;
+      }
     }
+    const requestId = (provider.requestId || 0) + 1;
+    provider.requestId = requestId;
+    provider.epoch = epoch;
     provider.state = "fetching";
     provider.data = null;
     provider.error = null;
@@ -1066,6 +1073,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     }
     try {
       const data = await providerSearch(name, info, epoch, signal);
+      if (provider.requestId !== requestId) return;
       if (signal?.aborted || epoch !== currentTrackEpoch) {
         // abort cleanup
         provider.state = "idle";
@@ -1075,6 +1083,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
       provider.state = "done";
       provider.data = data;
     } catch (error) {
+      if (provider.requestId !== requestId) return;
       if (error?.name === "AbortError" || signal?.aborted || epoch !== currentTrackEpoch) {
         // abort cleanup
         provider.state = "idle";
@@ -1169,16 +1178,28 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
   }
 
   let lrclibBlockedUntil = 0;
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const sleep = (ms, signal = null) => new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    let timer = setTimeout(done, ms);
+    function done() {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener?.("abort", done);
+      resolve();
+    }
+    signal?.addEventListener?.("abort", done, { once: true });
+  });
 
   function parseRetryAfter(header) {
     if (!header) return 60;
     const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds, 300);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds, 86400);
     const parsedDate = Date.parse(header);
     if (Number.isFinite(parsedDate)) {
       const diff = Math.ceil((parsedDate - Date.now()) / 1000);
-      return diff > 0 ? Math.min(diff, 300) : 60;
+      return diff > 0 ? Math.min(diff, 86400) : 60;
     }
     return 60;
   }
@@ -1218,7 +1239,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     if (Date.now() < lrclibBlockedUntil) {
       return null;
     }
-    const bridged = await requestJson(url, { headers });
+    const bridged = await requestJson(url, { headers, signal });
     if (bridged?.__status === 429) {
       const retryAfter = parseRetryAfter(bridged.__retryAfter);
       lrclibBlockedUntil = Date.now() + retryAfter * 1000;
@@ -1278,8 +1299,9 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     let score = titleSim * 0.6 + artistSim * 0.4;
     if (info.songDuration > 0 && itemDuration > 0) {
       const diff = Math.abs(itemDuration - info.songDuration);
+      // reject mismatched recording durations
+      if (diff > 2.5) return -1;
       if (diff < 5) score += 0.1;
-      else if (diff > 30) score -= 0.2;
     }
     return score;
   }
@@ -1324,7 +1346,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     // structured clean query
     if (cleanTitle) {
       if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      await sleep(250);
+      await sleep(250, signal);
       if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       const query = new URLSearchParams({
         artist_name: cleanArt || info.artist,
@@ -1344,7 +1366,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     // structured raw query
     if (!data.length && info.title) {
       if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      await sleep(250);
+      await sleep(250, signal);
       if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       const query = new URLSearchParams({
         artist_name: info.artist,
@@ -1361,7 +1383,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     // fallback query
     if (!data.length) {
       if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      await sleep(250);
+      await sleep(250, signal);
       if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
       const q = `${cleanArt || info.artist} ${cleanTitle || info.title}`.trim();
       const query = new URLSearchParams({ q });
@@ -1404,7 +1426,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     const app = runtime.app();
     const manager = app?.networkManager;
     if (!manager?.fetch) return null;
-    const data = await manager.fetch("/next?prettyPrint=false", { videoId: info.videoId });
+    const data = await manager.fetch("/next?prettyPrint=false", { videoId: info.videoId, signal });
     if (epoch !== currentTrackEpoch || signal?.aborted) return null;
     const tabs = data?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer?.watchNextTabbedResultsRenderer?.tabs;
     if (!Array.isArray(tabs)) return null;
@@ -1415,6 +1437,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ browseId, context: { client: { clientName: "26", clientVersion: "7.01.05" } } }),
+      signal,
     });
     if (epoch !== currentTrackEpoch || signal?.aborted) return null;
     if (!response?.ok || !response.body) return null;
@@ -1423,10 +1446,11 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     const timed = contents?.elementRenderer?.newElement?.type?.componentType?.model?.timedLyricsModel?.lyricsData?.timedLyricsData;
     let lines = Array.isArray(timed) && timed[0]?.cueRange
       ? timed.map((item) => {
-          const start = Number.parseInt(item.cueRange.startTimeMilliseconds, 10);
-          const end = Number.parseInt(item.cueRange.endTimeMilliseconds, 10);
-          return { time: formatTime(start), timeInMs: start, duration: Math.max(0, end - start), text: clean(item.lyricLine) === "♪" ? "" : clean(item.lyricLine), words: [] };
-        })
+          const start = Number.parseInt(item?.cueRange?.startTimeMilliseconds, 10);
+          const end = Number.parseInt(item?.cueRange?.endTimeMilliseconds, 10);
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+          return { time: formatTime(start), timeInMs: start, duration: end - start, text: clean(item.lyricLine) === "♪" ? "" : clean(item.lyricLine), words: [] };
+        }).filter(Boolean)
       : null;
     if (lines?.length && lines[0].timeInMs > 300) lines.unshift({ time: "00:00.00", timeInMs: 0, duration: lines[0].timeInMs, text: "", words: [] });
     let lyrics = null;
@@ -1529,6 +1553,7 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
       if (lines[i + 1]) {
         lines[i].duration = Math.max(0, lines[i + 1].timeInMs - lines[i].timeInMs);
       }
+      if (!Number.isFinite(lines[i].duration)) lines[i].duration = 3000;
     }
 
     if (lines[0]?.timeInMs > 300) {
@@ -2107,6 +2132,8 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
 
   const playerVideoDataListener = () => refreshTrack();
   const playerEmptiedListener = () => invalidateActiveTrack();
+  const mediaMetadataListener = () => refreshTrack();
+  const mediaEmptiedListener = () => invalidateActiveTrack();
 
   function bindPlayerListeners() {
     const player = getPlayer();
@@ -2125,9 +2152,17 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
   function bindMediaListeners() {
     const media = runtime.media();
     if (media === boundMedia) return;
-    if (boundMedia) boundMedia.removeEventListener("emptied", invalidateActiveTrack);
+    if (boundMedia) {
+      boundMedia.removeEventListener("loadedmetadata", mediaMetadataListener);
+      boundMedia.removeEventListener("durationchange", mediaMetadataListener);
+      boundMedia.removeEventListener("emptied", mediaEmptiedListener);
+    }
     boundMedia = media || null;
-    if (boundMedia) boundMedia.addEventListener("emptied", invalidateActiveTrack);
+    if (boundMedia) {
+      boundMedia.addEventListener("loadedmetadata", mediaMetadataListener);
+      boundMedia.addEventListener("durationchange", mediaMetadataListener);
+      boundMedia.addEventListener("emptied", mediaEmptiedListener);
+    }
   }
 
   function restartUpdateInterval() {
@@ -2166,8 +2201,10 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
       activeTrack?.videoId !== info.videoId ||
       activeTrack?.title !== info.title ||
       activeTrack?.artist !== info.artist;
+    const durationChanged = activeTrack && info.songDuration > 0 &&
+      Math.abs((activeTrack.songDuration || 0) - info.songDuration) > 1;
 
-    if (isDifferent || force) {
+    if (isDifferent || durationChanged || force) {
       if (currentAbortController) {
         currentAbortController.abort();
         currentAbortController = null;
@@ -2257,7 +2294,9 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
       boundPlayer = null;
     }
     if (boundMedia) {
-      boundMedia.removeEventListener("emptied", invalidateActiveTrack);
+      boundMedia.removeEventListener("loadedmetadata", mediaMetadataListener);
+      boundMedia.removeEventListener("durationchange", mediaMetadataListener);
+      boundMedia.removeEventListener("emptied", mediaEmptiedListener);
       boundMedia = null;
     }
     window.clearInterval(updateInterval);
@@ -2274,5 +2313,5 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     render();
   }
 
-  runtime.register("synced_lyrics", { start, stop, update, applyEffect, fetchLrcLib, parseRetryAfter, parseLrc, renderPlain });
+  runtime.register("synced_lyrics", { start, stop, update, applyEffect, fetchLrcLib, parseRetryAfter, parseLrc, renderPlain, scoreCandidate });
 })();

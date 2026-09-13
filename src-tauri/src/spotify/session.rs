@@ -2,10 +2,11 @@ use super::client;
 use super::credentials;
 use super::local_auth::BrowserAuthMode;
 use super::models::SpotifySession;
+use super::web_player::WebPlayerClient;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{AppHandle, Manager, Theme, WebviewUrl};
 
@@ -13,6 +14,7 @@ const LOGIN_WINDOW_LABEL: &str = "spotify_login";
 const COOKIE_POLL_INTERVAL: Duration = Duration::from_millis(750);
 const COOKIE_POLL_LIMIT: usize = 400;
 const TOKEN_REFRESH_SKEW_SECS: u64 = 60;
+const WEB_METADATA_TTL_SECS: u64 = 15 * 60;
 static POPUP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Default)]
@@ -20,6 +22,7 @@ pub struct SpotifyController {
     current_session: Arc<Mutex<Option<SpotifySession>>>,
     auth_generation: Arc<AtomicU64>,
     token_refresh: Arc<Mutex<()>>,
+    profile_attempt: Arc<Mutex<Option<(u64, Instant)>>>,
 }
 
 impl SpotifyController {
@@ -28,6 +31,7 @@ impl SpotifyController {
             current_session: Arc::new(Mutex::new(credentials::load_session())),
             auth_generation: Arc::new(AtomicU64::new(0)),
             token_refresh: Arc::new(Mutex::new(())),
+            profile_attempt: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -71,19 +75,31 @@ impl SpotifyController {
             return Ok(session.access_token);
         }
 
-        if let Some(sp_dc) = session.sp_dc.clone().filter(|value| !value.is_empty()) {
+        if let Some(sp_dc) = session
+            .sp_dc
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+        {
             let refreshed = client::resolve_token_or_cookie(&format!("sp_dc={sp_dc}"))?;
             session.access_token = refreshed.access_token;
             session.expires_at_unix = refreshed.expires_at_unix;
+            if let Some(web_client_id) = refreshed.web_client_id {
+                if session.web_client_id.as_deref() != Some(web_client_id.as_str()) {
+                    session.web_client_token = None;
+                    session.web_app_version = None;
+                    session.web_metadata_expires_at_unix = 0;
+                }
+                session.web_client_id = Some(web_client_id);
+            }
         } else if let (Some(client_id), Some(refresh_token)) = (
             session
                 .oauth_client_id
                 .clone()
-                .filter(|value| !value.is_empty()),
+                .filter(|value| !value.trim().is_empty()),
             session
                 .refresh_token
                 .clone()
-                .filter(|value| !value.is_empty()),
+                .filter(|value| !value.trim().is_empty()),
         ) {
             let refreshed = client::refresh_oauth_token(&client_id, &refresh_token)?;
             session.access_token = refreshed.access_token;
@@ -106,6 +122,152 @@ impl SpotifyController {
         let token = session.access_token.clone();
         *current = Some(session);
         Ok(token)
+    }
+
+    pub fn refresh_profile(&self, app: &AppHandle) {
+        let Some(session) = self.get_session() else {
+            return;
+        };
+        if session.user_id.is_some()
+            && session
+                .user_name
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+        {
+            return;
+        }
+        let generation = self.auth_generation.load(Ordering::SeqCst);
+        let mut attempt = self
+            .profile_attempt
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if attempt.as_ref().is_some_and(|(previous, time)| {
+            *previous == generation && time.elapsed() < Duration::from_secs(60)
+        }) {
+            return;
+        }
+        *attempt = Some((generation, Instant::now()));
+        drop(attempt);
+        let controller = self.clone();
+        let app = app.clone();
+        thread::spawn(move || {
+            let profile = if controller.is_cookie_session() {
+                controller.get_web_player().and_then(|web| {
+                    web.profile()
+                        .map(|profile| (profile.id, profile.display_name))
+                        .map_err(|error| error.to_string())
+                })
+            } else {
+                controller
+                    .get_token()
+                    .and_then(|token| client::get_user_profile(&token))
+            };
+            let Ok((id, name)) = profile else {
+                return;
+            };
+            let name = name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| id.clone());
+            let _refresh = controller
+                .token_refresh
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut current = controller
+                .current_session
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if controller.auth_generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let Some(session) = current.as_mut() else {
+                return;
+            };
+            session.user_id = Some(id);
+            session.user_name = Some(name.clone());
+            let _ = credentials::save_session(session);
+            drop(current);
+            emit_to_main(
+                &app,
+                "session_profile",
+                &serde_json::json!({ "user_name": name }),
+            );
+        });
+    }
+
+    pub fn is_cookie_session(&self) -> bool {
+        self.get_session()
+            .and_then(|session| session.sp_dc)
+            .is_some_and(|value| !value.trim().is_empty())
+    }
+
+    // isolate cookie and oauth clients
+    pub fn get_web_player(&self) -> Result<WebPlayerClient, String> {
+        let generation = self.auth_generation.load(Ordering::SeqCst);
+        let token = self.get_token()?;
+        if self.auth_generation.load(Ordering::SeqCst) != generation {
+            return Err("The Spotify session changed while its token was loading.".to_string());
+        }
+        let session = self
+            .get_session()
+            .ok_or_else(|| "Spotify is not connected".to_string())?;
+        if session
+            .sp_dc
+            .as_deref()
+            .map_or(true, |value| value.trim().is_empty())
+        {
+            return Err("Spotify Web Player access requires a cookie-backed session".to_string());
+        }
+
+        if let (Some(client_token), Some(app_version), Some(expires_at)) = (
+            session.web_client_token.clone(),
+            session.web_app_version.clone(),
+            session.web_metadata_expires_at_unix.checked_sub(unix_now()),
+        ) {
+            if expires_at > TOKEN_REFRESH_SKEW_SECS {
+                if self.auth_generation.load(Ordering::SeqCst) != generation {
+                    return Err(
+                        "The Spotify session changed while Web Player metadata was loading."
+                            .to_string(),
+                    );
+                }
+                return WebPlayerClient::new(token, Some(client_token), Some(app_version))
+                    .map_err(|error| error.to_string());
+            }
+        }
+
+        let client_id = session
+            .web_client_id
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                "Spotify Web Player client metadata is unavailable; sign in again".to_string()
+            })?;
+        let web = WebPlayerClient::bootstrap(&token, client_id)
+            .map_err(|error| format!("Spotify Web Player bootstrap failed: {error}"))?;
+        let (client_token, app_version) = web.metadata();
+
+        let mut current = self
+            .current_session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(current_session) = current.as_mut() else {
+            return Err(
+                "The Spotify session changed while Web Player metadata was loading.".to_string(),
+            );
+        };
+        if self.auth_generation.load(Ordering::SeqCst) != generation
+            || current_session.access_token != token
+            || current_session.sp_dc != session.sp_dc
+        {
+            return Err(
+                "The Spotify session changed while Web Player metadata was loading.".to_string(),
+            );
+        }
+        current_session.web_client_token = Some(client_token.to_string());
+        current_session.web_app_version = Some(app_version.to_string());
+        current_session.web_metadata_expires_at_unix = unix_now() + WEB_METADATA_TTL_SECS;
+        credentials::save_session(current_session)?;
+        Ok(web)
     }
 
     pub fn open_login_window(&self, app: &AppHandle) -> Result<(), String> {
@@ -209,9 +371,13 @@ impl SpotifyController {
                 url::Url::parse("https://spotify.com/").ok(),
                 url::Url::parse("https://accounts.spotify.com/").ok(),
             ];
-            let mut rejected_cookie: Option<String> = None;
+            let mut last_cookie_validation: Option<(String, Instant)> = None;
+            let deadline = Instant::now()
+                + Duration::from_millis(
+                    COOKIE_POLL_INTERVAL.as_millis() as u64 * COOKIE_POLL_LIMIT as u64,
+                );
 
-            for _ in 0..COOKIE_POLL_LIMIT {
+            while Instant::now() < deadline {
                 if controller.auth_generation.load(Ordering::SeqCst) != generation {
                     break;
                 }
@@ -232,7 +398,17 @@ impl SpotifyController {
                 }
 
                 if let Some(value) = found_sp_dc {
-                    if rejected_cookie.as_deref() != Some(value.as_str()) {
+                    let should_validate = last_cookie_validation
+                        .as_ref()
+                        .map(|(last_value, attempted_at)| {
+                            last_value != &value || attempted_at.elapsed() >= Duration::from_secs(5)
+                        })
+                        .unwrap_or(true);
+                    if should_validate {
+                        let is_retry = last_cookie_validation
+                            .as_ref()
+                            .is_some_and(|(last_value, _)| last_value == &value);
+                        last_cookie_validation = Some((value.clone(), Instant::now()));
                         eprintln!("[SPOTIFY AUTH] captured sp_dc cookie, validating...");
                         match controller.handle_captured_token_for_generation(
                             &app,
@@ -244,11 +420,16 @@ impl SpotifyController {
                                 break;
                             }
                             Err(error) => {
+                                if !controller.auth_attempt_is_current(generation) {
+                                    break;
+                                }
                                 eprintln!(
                                     "[SPOTIFY AUTH] failed validating captured sp_dc: {error}"
                                 );
-                                rejected_cookie = Some(value);
-                                emit_auth_error(&app, &error);
+                                // retry transient cookie exchange failures
+                                if !is_retry && controller.auth_attempt_is_current(generation) {
+                                    emit_auth_error(&app, &error);
+                                }
                             }
                         }
                     }
@@ -302,16 +483,21 @@ impl SpotifyController {
             return Err("This Spotify sign-in attempt was superseded.".to_string());
         }
         let resolved = client::resolve_token_or_cookie(token_or_cookie)?;
-        let (user_id, display_name) = client::get_user_profile(&resolved.access_token)
-            .map_err(|error| format!("Spotify session validation failed: {error}"))?;
+        // fetch profile after token exchange
+        let user_id = None;
+        let display_name = None;
         let session = SpotifySession {
             access_token: resolved.access_token,
             expires_at_unix: resolved.expires_at_unix,
             refresh_token: None,
             oauth_client_id: None,
             sp_dc: resolved.sp_dc,
-            user_id: Some(user_id),
+            user_id,
             user_name: display_name,
+            web_client_id: resolved.web_client_id,
+            web_client_token: None,
+            web_app_version: None,
+            web_metadata_expires_at_unix: 0,
         };
         self.store_session(app, session, generation)
     }
@@ -326,16 +512,21 @@ impl SpotifyController {
         if !self.auth_attempt_is_current(generation) {
             return Err("This Spotify sign-in attempt was superseded.".to_string());
         }
-        let (user_id, display_name) = client::get_user_profile(&token.access_token)
-            .map_err(|error| format!("Spotify session validation failed: {error}"))?;
+        // defer profile lookup until connected
+        let user_id = None;
+        let display_name = None;
         let session = SpotifySession {
             access_token: token.access_token,
             expires_at_unix: unix_now() + token.expires_in.max(60),
             refresh_token: token.refresh_token,
             oauth_client_id: Some(client_id.to_string()),
             sp_dc: None,
-            user_id: Some(user_id),
+            user_id,
             user_name: display_name,
+            web_client_id: None,
+            web_client_token: None,
+            web_app_version: None,
+            web_metadata_expires_at_unix: 0,
         };
         self.store_session(app, session, generation)
     }
@@ -358,7 +549,8 @@ impl SpotifyController {
         self.auth_generation.fetch_add(1, Ordering::SeqCst);
         drop(current);
         close_auth_windows(app);
-        emit_connected(app, session.user_name.as_deref().unwrap_or("Spotify User"));
+        emit_connected(app, session.user_name.as_deref().unwrap_or(""));
+        self.refresh_profile(app);
         Ok(session)
     }
 

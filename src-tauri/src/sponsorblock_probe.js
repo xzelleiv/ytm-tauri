@@ -30,13 +30,18 @@
           }
         }
       }
-      if (!res || !res.ok) {
+      if (!res) {
+        return [];
+      }
+      if (res.status === 404) {
         segmentCache.set(videoId, []);
+        return [];
+      }
+      if (!res.ok) {
         return [];
       }
       const data = await res.json();
       if (!Array.isArray(data)) {
-        segmentCache.set(videoId, []);
         return [];
       }
       const segments = data

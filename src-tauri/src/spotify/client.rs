@@ -1,7 +1,9 @@
 use super::models::{SpotifyPlaylist, SpotifyTrack};
+use super::web_player::WebPlayerClient;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::Read;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,18 +13,21 @@ const TOTP_SEED_URL: &str =
     "https://code.thetadev.de/ThetaDev/spotify-secrets/raw/branch/main/secrets/secretDict.json";
 const TOTP_SEED_MAX_BYTES: u64 = 64 * 1024;
 const TOKEN_REFRESH_SKEW_SECS: u64 = 30;
+const MAX_RETRY_AFTER_SECS: u64 = 30;
+static RATE_LIMIT_UNTIL_UNIX: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct PagedResponse<T> {
     #[serde(default = "Vec::new")]
     items: Vec<T>,
-    #[serde(default)]
-    total: usize,
+    total: Option<usize>,
     #[serde(default)]
     offset: usize,
     #[serde(default)]
     limit: usize,
+    #[serde(default)]
+    next: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +83,8 @@ struct ApiPlaylist {
     images: Option<Vec<ApiImage>>,
     owner: Option<ApiOwner>,
     tracks: Option<ApiTracksRef>,
+    #[serde(default)]
+    items: Option<ApiTracksRef>,
     collaborative: Option<bool>,
     snapshot_id: Option<String>,
 }
@@ -105,6 +112,10 @@ struct TokenResponse {
     access_token: String,
     #[serde(default)]
     access_token_expiration_timestamp_ms: u64,
+    #[serde(default, rename = "isAnonymous")]
+    is_anonymous: Option<bool>,
+    #[serde(default, rename = "clientId")]
+    client_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +132,7 @@ pub struct ResolvedCredential {
     pub access_token: String,
     pub expires_at_unix: u64,
     pub sp_dc: Option<String>,
+    pub web_client_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -415,11 +427,23 @@ pub fn resolve_token_or_cookie(token_or_cookie: &str) -> Result<ResolvedCredenti
         return Err("Spotify credential is too large".to_string());
     }
 
-    if !raw.starts_with("sp_dc=") && (raw.starts_with("BQ") || get_user_profile(raw).is_ok()) {
+    if raw.starts_with("BQ") {
+        get_user_profile(raw)
+            .map_err(|error| format!("Spotify access token validation failed: {error}"))?;
         return Ok(ResolvedCredential {
             access_token: raw.to_string(),
             expires_at_unix: unix_now() + 3600,
             sp_dc: None,
+            web_client_id: None,
+        });
+    }
+
+    if !raw.starts_with("sp_dc=") && get_user_profile(raw).is_ok() {
+        return Ok(ResolvedCredential {
+            access_token: raw.to_string(),
+            expires_at_unix: unix_now() + 3600,
+            sp_dc: None,
+            web_client_id: None,
         });
     }
 
@@ -459,6 +483,17 @@ pub fn resolve_token_or_cookie(token_or_cookie: &str) -> Result<ResolvedCredenti
     if token_resp.access_token.is_empty() {
         return Err("empty access token returned".to_string());
     }
+    match token_resp.is_anonymous {
+        Some(false) => {}
+        Some(true) => {
+            return Err("Spotify returned an anonymous token; sign in and try again".to_string())
+        }
+        None => {
+            return Err(
+                "Spotify did not confirm an authenticated token; sign in and try again".to_string(),
+            )
+        }
+    }
 
     let expires_at_unix = if token_resp.access_token_expiration_timestamp_ms > 0 {
         token_resp.access_token_expiration_timestamp_ms / 1000
@@ -470,6 +505,10 @@ pub fn resolve_token_or_cookie(token_or_cookie: &str) -> Result<ResolvedCredenti
         access_token: token_resp.access_token,
         expires_at_unix: expires_at_unix.max(unix_now() + TOKEN_REFRESH_SKEW_SECS),
         sp_dc: Some(cookie_val.to_string()),
+        web_client_id: token_resp
+            .client_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
     })
 }
 
@@ -551,7 +590,8 @@ pub fn get_liked_songs_count(token: &str) -> Result<usize, String> {
         token,
     )?;
     let page: PagedResponse<SavedTrackItem> = resp.json().map_err(|e| e.to_string())?;
-    Ok(page.total)
+    page.total
+        .ok_or_else(|| "Spotify omitted the Liked Songs total".to_string())
 }
 
 pub fn fetch_all_liked_songs<F>(
@@ -567,16 +607,26 @@ where
         .map_err(|e| e.to_string())?;
 
     let mut tracks = Vec::new();
-    let mut offset = 0;
     let limit = 50;
+    let mut next_offset = Some(0usize);
 
-    loop {
+    while let Some(offset) = next_offset.take() {
+        if RATE_LIMIT_UNTIL_UNIX.load(Ordering::SeqCst) > unix_now() {
+            return Err(rate_limit_error());
+        }
         let url = format!("https://api.spotify.com/v1/me/tracks?limit={limit}&offset={offset}");
         let resp = send_with_retry(&client, &url, token)?;
 
         let page: PagedResponse<SavedTrackItem> = resp.json().map_err(|e| e.to_string())?;
-        let total = page.total;
+        let total = page
+            .total
+            .ok_or_else(|| "Spotify omitted the Liked Songs total".to_string())?;
         let page_count = page.items.len();
+        if page_count == 0 && offset < total {
+            return Err(
+                "Spotify returned an empty page before all Liked Songs were fetched".to_string(),
+            );
+        }
 
         for item in page.items {
             if let Some(t) = item.track {
@@ -587,10 +637,7 @@ where
         }
 
         progress_cb(tracks.len(), total);
-        offset += limit;
-        if offset >= total || tracks.len() >= total || page_count == 0 {
-            break;
-        }
+        next_offset = next_page_offset(page.next.as_deref(), offset, page_count, total);
     }
 
     Ok(tracks)
@@ -606,34 +653,45 @@ pub fn fetch_user_playlists(
         .map_err(|e| e.to_string())?;
 
     let mut playlists = Vec::new();
-    let mut offset = 0;
     let limit = 50;
 
-    // fetch liked count
-    if let Ok(liked_count) = get_liked_songs_count(token) {
-        if liked_count > 0 {
-            playlists.push(SpotifyPlaylist {
-                id: "liked_songs".to_string(),
-                name: "Liked Songs".to_string(),
-                description: Some(format!("{liked_count} saved songs")),
-                track_count: liked_count,
-                image_url: None,
-                owner_name: Some("You".to_string()),
-                is_liked_songs: true,
-                is_collaborative: false,
-                is_owner: true,
-                snapshot_id: None,
-            });
-        }
-    }
+    // keep liked songs discoverable
+    let liked_count = get_liked_songs_count(token).unwrap_or(0);
+    playlists.push(SpotifyPlaylist {
+        id: "liked_songs".to_string(),
+        name: "Liked Songs".to_string(),
+        description: Some(if liked_count > 0 {
+            format!("{liked_count} saved songs")
+        } else {
+            "Saved songs".to_string()
+        }),
+        track_count: liked_count,
+        image_url: None,
+        owner_name: Some("You".to_string()),
+        is_liked_songs: true,
+        is_collaborative: false,
+        is_owner: true,
+        snapshot_id: None,
+    });
 
-    loop {
+    let mut next_offset = Some(0usize);
+    while let Some(offset) = next_offset.take() {
+        if RATE_LIMIT_UNTIL_UNIX.load(Ordering::SeqCst) > unix_now() {
+            return Err(rate_limit_error());
+        }
         let url = format!("https://api.spotify.com/v1/me/playlists?limit={limit}&offset={offset}");
         let resp = send_with_retry(&client, &url, token)?;
 
         let page: PagedResponse<ApiPlaylist> = resp.json().map_err(|e| e.to_string())?;
-        let total = page.total;
+        let total = page
+            .total
+            .ok_or_else(|| "Spotify omitted the playlist total".to_string())?;
         let page_count = page.items.len();
+        if page_count == 0 && offset < total {
+            return Err(
+                "Spotify returned an empty page before all playlists were fetched".to_string(),
+            );
+        }
 
         for item in page.items {
             let is_collab = item.collaborative.unwrap_or(false);
@@ -643,7 +701,7 @@ pub fn fetch_user_playlists(
                 .and_then(|o| o.id.as_deref())
                 .zip(current_user_id)
                 .map(|(a, b)| a == b)
-                .unwrap_or(true);
+                .unwrap_or(false);
 
             let image_url = item
                 .images
@@ -654,7 +712,11 @@ pub fn fetch_user_playlists(
                 id: item.id,
                 name: item.name,
                 description: item.description,
-                track_count: item.tracks.and_then(|t| t.total).unwrap_or(0),
+                track_count: item
+                    .items
+                    .and_then(|items| items.total)
+                    .or_else(|| item.tracks.and_then(|tracks| tracks.total))
+                    .unwrap_or(0),
                 image_url,
                 owner_name: item.owner.and_then(|o| o.display_name),
                 is_liked_songs: false,
@@ -664,10 +726,7 @@ pub fn fetch_user_playlists(
             });
         }
 
-        offset += limit;
-        if offset >= total || page_count == 0 {
-            break;
-        }
+        next_offset = next_page_offset(page.next.as_deref(), offset, page_count, total);
     }
 
     Ok(playlists)
@@ -718,38 +777,56 @@ where
         id: api_pl.id.clone(),
         name: api_pl.name.clone(),
         description: api_pl.description.clone(),
-        track_count: api_pl.tracks.as_ref().and_then(|t| t.total).unwrap_or(0),
+        track_count: api_pl
+            .items
+            .as_ref()
+            .and_then(|items| items.total)
+            .or_else(|| api_pl.tracks.as_ref().and_then(|tracks| tracks.total))
+            .unwrap_or(0),
         image_url,
         owner_name: api_pl.owner.and_then(|o| o.display_name),
         is_liked_songs: false,
         is_collaborative: api_pl.collaborative.unwrap_or(false),
-        is_owner: true,
+        // ownership requires profile evidence
+        is_owner: false,
         snapshot_id: api_pl.snapshot_id,
     };
 
     let mut tracks = Vec::new();
-    let mut offset = 0;
-    let limit = 100;
+    // support current playlist pagination
+    let limit = 50;
+    let mut next_offset = Some(0usize);
 
-    loop {
-        let items_url = format!(
+    while let Some(offset) = next_offset.take() {
+        if RATE_LIMIT_UNTIL_UNIX.load(Ordering::SeqCst) > unix_now() {
+            return Err(rate_limit_error());
+        }
+        let url = format!(
             "https://api.spotify.com/v1/playlists/{playlist_id}/items?limit={limit}&offset={offset}"
         );
-        let resp = match send_with_retry(&client, &items_url, token) {
-            Ok(r) => r,
-            Err(e) => {
-                // fallback tracks endpoint
+        let resp = match send_with_retry(&client, &url, token) {
+            Ok(response) => response,
+            Err(error) if is_missing_playlist_items_endpoint(&error) => {
                 let legacy_url = format!(
                     "https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit={limit}&offset={offset}"
                 );
-                send_with_retry(&client, &legacy_url, token)
-                    .map_err(|_| format!("fetch items failed {e}"))?
+                send_with_retry(&client, &legacy_url, token).map_err(|legacy_error| {
+                    format!("{error}; legacy fallback failed: {legacy_error}")
+                })?
             }
+            Err(error) => return Err(error),
         };
 
         let page: PagedResponse<PlaylistItem> = resp.json().map_err(|e| e.to_string())?;
-        let total = page.total;
+        let total = page
+            .total
+            .ok_or_else(|| "Spotify omitted the playlist items total".to_string())?;
         let page_count = page.items.len();
+        if page_count == 0 && offset < total {
+            return Err(
+                "Spotify returned an empty page before all playlist items were fetched".to_string(),
+            );
+        }
 
         for item in page.items {
             let api_t = item.track.or(item.item);
@@ -761,13 +838,187 @@ where
         }
 
         progress_cb(tracks.len(), total);
-        offset += limit;
-        if offset >= total || tracks.len() >= total || page_count == 0 {
-            break;
-        }
+        next_offset = next_page_offset(page.next.as_deref(), offset, page_count, total);
     }
 
     Ok((playlist, tracks))
+}
+
+// paginate using raw response counts
+pub fn fetch_all_liked_songs_web<F>(
+    web: &WebPlayerClient,
+    mut progress_cb: F,
+) -> Result<Vec<SpotifyTrack>, String>
+where
+    F: FnMut(usize, usize),
+{
+    let limit = 100;
+    let mut tracks = Vec::new();
+    let mut offset = 0usize;
+    let mut total = None;
+
+    loop {
+        let page = web
+            .liked_tracks_page(offset, limit)
+            .map_err(|error| error.to_string())?;
+        let page_total = total.get_or_insert(page.total);
+        if *page_total != page.total {
+            return Err("Spotify changed the Liked Songs total during import".to_string());
+        }
+        if page.raw_count == 0 && offset < page.total {
+            return Err("Spotify returned an empty Liked Songs page before the end".to_string());
+        }
+        tracks.extend(page.items);
+        progress_cb(tracks.len(), page.total);
+        let Some(next) = web_next_offset(offset, page.raw_count, page.total)? else {
+            return Ok(tracks);
+        };
+        offset = next;
+    }
+}
+
+pub fn fetch_user_playlists_web(web: &WebPlayerClient) -> Result<Vec<SpotifyPlaylist>, String> {
+    let liked_count = web
+        .liked_tracks_page(0, 1)
+        .map(|page| page.total)
+        .unwrap_or(0);
+    let mut playlists = vec![SpotifyPlaylist {
+        id: "liked_songs".to_string(),
+        name: "Liked Songs".to_string(),
+        description: Some(if liked_count > 0 {
+            format!("{liked_count} saved songs")
+        } else {
+            "Saved songs".to_string()
+        }),
+        track_count: liked_count,
+        image_url: None,
+        owner_name: Some("You".to_string()),
+        is_liked_songs: true,
+        is_collaborative: false,
+        is_owner: true,
+        snapshot_id: None,
+    }];
+
+    let limit = 100;
+    let mut offset = 0usize;
+    let mut total = None;
+    loop {
+        let page = web
+            .playlists_page(offset, limit)
+            .map_err(|error| error.to_string())?;
+        let page_total = total.get_or_insert(page.total);
+        if *page_total != page.total {
+            return Err("Spotify changed the playlist total during import".to_string());
+        }
+        if page.raw_count == 0 && offset < page.total {
+            return Err("Spotify returned an empty playlist page before the end".to_string());
+        }
+        playlists.extend(page.items);
+        let Some(next) = web_next_offset(offset, page.raw_count, page.total)? else {
+            return Ok(playlists);
+        };
+        offset = next;
+    }
+}
+
+pub fn fetch_playlist_items_web<F>(
+    web: &WebPlayerClient,
+    playlist_id: &str,
+    mut progress_cb: F,
+) -> Result<(SpotifyPlaylist, Vec<SpotifyTrack>), String>
+where
+    F: FnMut(usize, usize),
+{
+    let limit = 100;
+    let first = web
+        .playlist_page(playlist_id, 0, limit)
+        .map_err(|error| error.to_string())?;
+    let playlist = first.playlist;
+    let total = first.tracks.total;
+    if first.tracks.raw_count == 0 && total > 0 {
+        return Err("Spotify returned an empty playlist page before the end".to_string());
+    }
+
+    let mut tracks = first.tracks.items;
+    progress_cb(tracks.len(), total);
+    let mut offset = web_next_offset(0, first.tracks.raw_count, total)?;
+    while let Some(current_offset) = offset {
+        let page = web
+            .playlist_tracks_page(playlist_id, current_offset, limit)
+            .map_err(|error| error.to_string())?;
+        if page.total != total {
+            return Err("Spotify changed the playlist total during import".to_string());
+        }
+        if page.raw_count == 0 && current_offset < total {
+            return Err("Spotify returned an empty playlist page before the end".to_string());
+        }
+        tracks.extend(page.items);
+        progress_cb(tracks.len(), total);
+        offset = web_next_offset(current_offset, page.raw_count, total)?;
+    }
+
+    Ok((playlist, tracks))
+}
+
+fn web_next_offset(offset: usize, raw_count: usize, total: usize) -> Result<Option<usize>, String> {
+    let next = offset
+        .checked_add(raw_count)
+        .ok_or_else(|| "Spotify pagination offset overflowed".to_string())?;
+    if next > total {
+        return Err("Spotify returned a page beyond its reported total".to_string());
+    }
+    if raw_count == 0 || next >= total {
+        Ok(None)
+    } else {
+        Ok(Some(next))
+    }
+}
+
+fn next_page_offset(
+    next: Option<&str>,
+    offset: usize,
+    item_count: usize,
+    total: usize,
+) -> Option<usize> {
+    let expected_next = offset.saturating_add(item_count);
+    if let Some(next) = next.filter(|url| !url.trim().is_empty()) {
+        if let Ok(parsed) = url::Url::parse(next) {
+            let valid_host = parsed.scheme() == "https"
+                && parsed.host_str() == Some("api.spotify.com")
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && parsed.port().map_or(true, |port| port == 443);
+            if valid_host {
+                if let Some(next_offset) = parsed
+                    .query_pairs()
+                    .find_map(|(key, value)| (key == "offset").then(|| value.parse().ok()))
+                    .flatten()
+                {
+                    if next_offset == expected_next && next_offset < total {
+                        return Some(next_offset);
+                    }
+                }
+            }
+        }
+    }
+
+    let next_offset = expected_next;
+    if item_count == 0 || next_offset >= total {
+        None
+    } else {
+        Some(next_offset)
+    }
+}
+
+fn is_missing_playlist_items_endpoint(error: &str) -> bool {
+    error.contains("http status 404") || error.contains("http status 405")
+}
+
+fn rate_limit_error() -> String {
+    let remaining = RATE_LIMIT_UNTIL_UNIX
+        .load(Ordering::SeqCst)
+        .saturating_sub(unix_now());
+    format!("Spotify rate limited; retry after {remaining} seconds")
 }
 
 fn send_with_retry(
@@ -776,6 +1027,10 @@ fn send_with_retry(
     token: &str,
 ) -> Result<reqwest::blocking::Response, String> {
     for _ in 0..3 {
+        let cooldown_until = RATE_LIMIT_UNTIL_UNIX.load(Ordering::SeqCst);
+        if cooldown_until > unix_now() {
+            return Err(rate_limit_error());
+        }
         let resp = client
             .get(url)
             .header(reqwest::header::USER_AGENT, DESKTOP_USER_AGENT)
@@ -790,7 +1045,13 @@ fn send_with_retry(
                 .and_then(|h| h.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(2);
-            thread::sleep(Duration::from_secs(retry_after.clamp(1, 10)));
+            let retry_after = retry_after.max(1);
+            let retry_until = unix_now().saturating_add(retry_after);
+            RATE_LIMIT_UNTIL_UNIX.fetch_max(retry_until, Ordering::SeqCst);
+            if retry_after > MAX_RETRY_AFTER_SECS {
+                return Err(rate_limit_error());
+            }
+            thread::sleep(Duration::from_secs(retry_after));
             continue;
         }
 
@@ -801,7 +1062,7 @@ fn send_with_retry(
         return Err(format!("http status {}", resp.status()));
     }
 
-    Err("max retries exceeded".to_string())
+    Err(rate_limit_error())
 }
 
 fn convert_api_track(t: ApiTrack) -> Option<SpotifyTrack> {
@@ -866,5 +1127,63 @@ mod tests {
     #[test]
     fn malformed_totp_seed_is_rejected() {
         assert!(parse_totp_seed_dictionary(br#"{"62":[1,2]}"#).is_err());
+    }
+
+    #[test]
+    fn pagination_prefers_spotify_next_link() {
+        let next = next_page_offset(
+            Some("https://api.spotify.com/v1/me/tracks?offset=50&limit=50"),
+            0,
+            50,
+            1251,
+        );
+        assert_eq!(next, Some(50));
+
+        let external = next_page_offset(
+            Some("https://example.com/v1/me/tracks?offset=100&limit=50"),
+            50,
+            50,
+            1251,
+        );
+        assert_eq!(external, Some(100));
+
+        let wrong_port = next_page_offset(
+            Some("https://api.spotify.com:444/v1/me/tracks?offset=100&limit=50"),
+            50,
+            50,
+            1251,
+        );
+        assert_eq!(wrong_port, Some(100));
+    }
+
+    #[test]
+    fn pagination_falls_back_to_offset_when_next_is_missing() {
+        let next = next_page_offset(None, 50, 50, 1251);
+        assert_eq!(next, Some(100));
+
+        let done = next_page_offset(None, 1250, 1, 1251);
+        assert!(done.is_none());
+    }
+
+    #[test]
+    fn pagination_advances_over_all_raw_items_when_some_tracks_are_unavailable() {
+        let total = 1251usize;
+        let mut offset = Some(0usize);
+        let mut raw_items_seen = 0usize;
+        let mut converted_tracks = 0usize;
+        let mut pages = 0usize;
+
+        while let Some(page_offset) = offset.take() {
+            let raw_items = (total - page_offset).min(50);
+            raw_items_seen += raw_items;
+            // count unavailable entries when paging
+            converted_tracks += (0..raw_items).filter(|index| index % 11 != 0).count();
+            pages += 1;
+            offset = next_page_offset(None, page_offset, raw_items, total);
+        }
+
+        assert_eq!(pages, 26);
+        assert_eq!(raw_items_seen, total);
+        assert!(converted_tracks < raw_items_seen);
     }
 }

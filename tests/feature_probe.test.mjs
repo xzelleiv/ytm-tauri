@@ -170,3 +170,15 @@ test("clearOrphanedInert removes inert attribute when no dialog is visible", () 
   pointerDownHandler();
   assert.equal(inertRemoved, true);
 });
+
+
+test("updater status is read without starting an update", async () => {
+  const context = createRuntime();
+  const pending = context.window.__ytmFeatures.getUpdateStatus();
+  const request = JSON.parse(context.document.title.slice("YTMFEATURE:".length));
+  assert.equal(request.kind, "get_update_status");
+  assert.equal(request.action, undefined);
+  context.window.__ytmFeatures.receive(request.id, { ok: true, body: JSON.stringify({ stage: "downloading", downloaded: 5, total: 10 }) });
+  assert.equal(JSON.parse((await pending).body).stage, "downloading");
+  assert.equal(context.document.title, "YouTube Music");
+});

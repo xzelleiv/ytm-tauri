@@ -10,6 +10,8 @@
   let speed = 1;
   let observer = null;
   let rateHandler = null;
+  let boundMedia = null;
+  let mediaPollTimer = null;
 
   function clamp(value) {
     return Math.min(MAX, Math.max(MIN, Number.isFinite(value) ? value : 1));
@@ -68,8 +70,22 @@
     forceRate();
   }
 
-  function forceRate() {
+  function bindMedia() {
     const media = runtime.media();
+    if (media === boundMedia) return media;
+
+    if (boundMedia && rateHandler) {
+      boundMedia.removeEventListener("ratechange", rateHandler);
+    }
+    boundMedia = media || null;
+    if (boundMedia && rateHandler) {
+      boundMedia.addEventListener("ratechange", rateHandler);
+    }
+    return boundMedia;
+  }
+
+  function forceRate() {
+    const media = bindMedia();
     if (media && media.playbackRate !== speed) media.playbackRate = speed;
   }
 
@@ -83,7 +99,9 @@
       observer.observe(popup, { childList: true, subtree: true });
     }
     rateHandler = forceRate;
-    runtime.media()?.addEventListener("ratechange", rateHandler);
+    bindMedia();
+    if (mediaPollTimer) clearInterval(mediaPollTimer);
+    mediaPollTimer = setInterval(forceRate, 1000);
     attach();
   }
 
@@ -95,7 +113,10 @@
   function stop() {
     observer?.disconnect();
     observer = null;
-    if (rateHandler) runtime.media()?.removeEventListener("ratechange", rateHandler);
+    if (mediaPollTimer) clearInterval(mediaPollTimer);
+    mediaPollTimer = null;
+    if (boundMedia && rateHandler) boundMedia.removeEventListener("ratechange", rateHandler);
+    boundMedia = null;
     rateHandler = null;
     container.remove();
     const media = runtime.media();

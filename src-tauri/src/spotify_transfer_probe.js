@@ -21,7 +21,10 @@
   let modalRoot = null;
   let reviewPage = 0;
   let reviewSortOrder = "review";
+  let reviewScrollTop = 0;
+  let transferError = null;
   const REVIEW_PAGE_SIZE = 50;
+  const MATCH_CONCURRENCY = 3;
   let isMatchingActive = false;
   let isTransferActive = false;
   let authEpoch = 0;
@@ -42,9 +45,12 @@
   }
 
   function appendMatchingLog(line) {
-    matchingLogs.push(line);
-    if (matchingLogs.length > 250) matchingLogs.shift();
     const term = document.getElementById("ytm-matching-terminal");
+    if (matchingLogs.length >= 250) {
+      matchingLogs.shift();
+      if (term?.firstElementChild) term.firstElementChild.remove();
+    }
+    matchingLogs.push(line);
     if (term) {
       const lineEl = document.createElement("div");
       lineEl.className = "ytm-spot-terminal-line";
@@ -65,6 +71,12 @@
     sending = true;
     const item = queue.shift();
     logDebug(`send id=${item.id} action=${item.message.action}`);
+    // allow time for paginated imports
+    const timeoutMs = item.message.action === "parse_link"
+      ? 120_000
+      : item.message.action === "list_playlists"
+      ? 60_000
+      : 10_000;
     item.timeout = setTimeout(() => {
       requests.delete(item.id);
       requests.delete(String(item.id));
@@ -74,7 +86,7 @@
       logDebug(`timeout id=${item.id} action=${item.message.action}`);
       item.reject(new Error("spotify bridge timeout"));
       flushQueue();
-    }, 10_000);
+    }, timeoutMs);
 
     requests.set(item.id, item);
     item.message.ts = Date.now();
@@ -121,18 +133,23 @@
       if (event === "session_connected") {
         authEpoch += 1;
         isConnected = true;
-        connectedUser = payload?.user_name || "Spotify User";
+        connectedUser = payload?.user_name || "";
         authStatus = null;
         updateNavButtonText();
         if (activeView === "home") {
           loadLibrary(authEpoch);
         }
+      } else if (event === "session_profile") {
+        if (!isConnected) return;
+        connectedUser = payload?.user_name || "";
+        if (activeView === "home") renderView();
       } else if (event === "session_error") {
         authStatus = payload?.error || "Spotify authentication failed";
         renderView();
       }
     },
     getSortedReviewTracks,
+    scoreCandidate,
   };
 
   window.__ytmSpotify = bridge;
@@ -289,6 +306,9 @@
         padding: 16px;
         margin-bottom: 14px;
       }
+      .ytm-spot-modal-backdrop { color-scheme: dark; }
+      select.ytm-spot-input { color-scheme: dark; }
+      select.ytm-spot-input option { background: #282828; color: #f1f1f1; }
       .ytm-spot-input {
         width: 100%;
         background: rgba(255, 255, 255, 0.06);
@@ -677,7 +697,7 @@
         tabContentHtml = `
           <div class="ytm-spot-section" style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px;">
             <div style="font-size:13px; color:#1db954; font-weight:500;">
-              Connected as <strong>${escapeHtml(connectedUser || "User")}</strong>
+              ${connectedUser ? `Connected as <strong>${escapeHtml(connectedUser)}</strong>` : "Spotify connected"}
             </div>
             <button id="ytm-spot-logout" class="ytm-spot-btn" style="padding:4px 10px; font-size:12px;">Log out</button>
           </div>
@@ -704,12 +724,15 @@
                         ? filtered
                             .map((p) => {
                               const imageUrl = safeSpotifyImageUrl(p.image_url);
+                              const trackCount = Number(p.track_count) > 0
+                                ? `${p.track_count} tracks`
+                                : "Count shown on import";
                               return `
                       <div class="ytm-spot-card ${p.is_liked_songs ? "liked-special" : ""}" data-pid="${escapeHtml(p.id)}">
                         ${imageUrl ? `<img class="ytm-spot-card-art" src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : `<div class="ytm-spot-card-art">${p.is_liked_songs ? "LS" : "SP"}</div>`}
                         <div class="ytm-spot-card-copy">
                           <div class="ytm-spot-card-title">${escapeHtml(p.name)}</div>
-                          <div class="ytm-spot-card-sub">${p.track_count} tracks${p.owner_name ? " - " + escapeHtml(p.owner_name) : ""}</div>
+                          <div class="ytm-spot-card-sub">${trackCount}${p.owner_name ? " - " + escapeHtml(p.owner_name) : ""}</div>
                         </div>
                       </div>
                     `;
@@ -799,13 +822,11 @@
         libraryEpoch += 1;
         authStatus = null;
         browserLoginBtn.disabled = true;
-        browserLoginBtn.textContent = "Opening browser...";
+        browserLoginBtn.textContent = "Opening Spotify sign-in...";
         try {
-          const response = await bridge.send({ action: "open_browser_login" });
+          await bridge.send({ action: "open_login" });
           if (epoch !== authEpoch) return;
-          authStatus = response.auth_mode === "oauth_pkce"
-            ? "Complete Spotify authorization in your browser."
-            : "The browser helper is ready for a web access token or sp_dc cookie.";
+          authStatus = "Sign in to Spotify in the app window. Your session stays in the native app and is never sent to YouTube Music.";
           renderView();
         } catch (error) {
           if (epoch !== authEpoch) return;
@@ -820,6 +841,8 @@
       logoutBtn.onclick = async () => {
         const epoch = ++authEpoch;
         libraryEpoch += 1;
+        workflowEpoch += 1;
+        isMatchingActive = false;
         isConnected = false;
         connectedUser = null;
         userPlaylists = [];
@@ -1012,6 +1035,9 @@
       if (progress) progress.textContent = "Attempting feature bridge fallback...";
 
       try {
+        if (isConnected || /^(?:liked|liked_songs)$/.test(link) || link.includes("collection/tracks")) {
+          throw new Error("The signed-in import failed. Retry to fetch the complete playlist.");
+        }
         const fallbackRes = await fetchEmbedViaFeatures(link);
         if (epoch !== workflowEpoch) return;
         tracks = fallbackRes.tracks || [];
@@ -1101,51 +1127,45 @@
   }
 
   function scoreCandidate(source, candidate, rank) {
-    const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const srcTitle = norm(source.title);
-    const candTitle = norm(candidate.title);
-
-    let titleScore = 0;
-    if (srcTitle === candTitle) {
-      titleScore = 1.0;
-    } else if (srcTitle.includes(candTitle) || candTitle.includes(srcTitle)) {
-      titleScore = 0.85;
-    } else {
-      const srcWords = (source.title || "")
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length > 2);
-      const matchedWords = srcWords.filter((w) =>
-        (candidate.title || "").toLowerCase().includes(w)
-      );
-      titleScore = srcWords.length ? matchedWords.length / srcWords.length : 0.4;
+    const norm = (value) => String(value || "").normalize("NFKC").toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const titleKey = (value) => norm(String(value || "")
+      .replace(/[([](?:official (?:audio|music video|video)|visualizer|lyrics? video)[)\]]/gi, "")
+      .replace(/(?:[-–—]\s*|[([])\s*(?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?\s*[)\]]?/gi, ""));
+    const srcTitle = titleKey(source.title);
+    const candTitle = titleKey(candidate.title);
+    const similarity = (left, right) => {
+      if (!left || !right) return 0;
+      if (left === right) return 1;
+      const wordsA = new Set(left.split(" "));
+      const wordsB = new Set(right.split(" "));
+      const common = [...wordsA].filter((word) => wordsB.has(word)).length;
+      return 2 * common / (wordsA.size + wordsB.size);
+    };
+    const titleScore = similarity(srcTitle, candTitle);
+    const artistKey = (value) => norm(value).replace(/ topic$/, "");
+    const srcArtists = (source.artists || []).map(artistKey).filter(Boolean);
+    const candArtists = (candidate.artists || []).map(artistKey).filter(Boolean);
+    const artistScore = srcArtists.reduce((best, artist) =>
+      Math.max(best, ...candArtists.map((other) => similarity(artist, other))), 0);
+    const hasDuration = source.duration_ms > 0 && candidate.duration_seconds > 0;
+    const difference = hasDuration ? Math.abs(source.duration_ms / 1000 - candidate.duration_seconds) : Infinity;
+    const durationScore = !hasDuration ? 0.5 : difference <= 3 ? 1 : difference <= 10 ? 0.85 : difference <= 25 ? 0.5 : 0;
+    const variantTags = ["remix", "acoustic", "live", "sped up", "slowed", "instrumental", "demo", "cover", "nightcore", "radio edit", "extended"];
+    const variantKey = (value) => ` ${norm(value)} `;
+    const variantDifference = variantTags.filter((tag) =>
+      variantKey(source.title).includes(` ${tag} `) !== variantKey(candidate.title).includes(` ${tag} `)).length;
+    const rankBonus = rank === 0 ? 1 : rank === 1 ? 0.8 : 0.6;
+    let finalScore = titleScore * 0.45 + artistScore * 0.35 + durationScore * 0.15 + rankBonus * 0.05 - variantDifference * 0.18;
+    if (titleScore === 1 && difference <= 5 && artistScore < 0.5 && !variantDifference) {
+      finalScore = Math.max(finalScore, 0.76);
     }
-
-    let artistScore = 0.3;
-    const srcArtists = (source.artists || []).map((a) => norm(a));
-    const candArtists = (candidate.artists || []).map((a) => norm(a));
-    for (const sa of srcArtists) {
-      if (candArtists.some((ca) => ca.includes(sa) || sa.includes(ca))) {
-        artistScore = 1.0;
-        break;
-      }
-    }
-
-    let durationScore = 0.5;
-    if (source.duration_ms && candidate.duration_seconds) {
-      const srcSecs = source.duration_ms / 1000;
-      const diff = Math.abs(srcSecs - candidate.duration_seconds);
-      if (diff <= 3) durationScore = 1.0;
-      else if (diff <= 10) durationScore = 0.85;
-      else if (diff <= 25) durationScore = 0.6;
-      else durationScore = 0.2;
-    }
-
-    const rankBonus = rank === 0 ? 1.0 : rank === 1 ? 0.8 : 0.6;
-    const total =
-      titleScore * 0.45 + artistScore * 0.35 + durationScore * 0.15 + rankBonus * 0.05;
-    const finalScore = Math.min(1.0, Math.max(0.0, total));
+    // score evidence independently of ranking
+    if (artistScore < 0.5 || titleScore < 0.8 || variantDifference || (hasDuration && difference > 25)) finalScore = Math.min(finalScore, 0.81);
+    if (!srcTitle || !candTitle) finalScore = 0;
+    finalScore = Math.min(1, Math.max(0, finalScore));
     candidate.score = finalScore;
+    candidate.review_reason = variantDifference ? "Different recording version" : hasDuration && difference > 25 ? "Different track length" : artistScore < 0.5 ? "Check artist credit" : "";
     candidate.confidence =
       finalScore >= 0.82 ? "high" : finalScore >= 0.6 ? "review" : "low";
     return candidate;
@@ -1196,50 +1216,120 @@
     if (!job || currentJob !== job || epoch !== workflowEpoch || !window.__ytmTransferAdapter) return;
     const tracks = job.tracks || [];
 
-    for (let i = 0; i < tracks.length; i++) {
-      if (!isMatchingActive || currentJob !== job || epoch !== workflowEpoch) return;
+    const searchCache = new Map();
+    const pendingLogs = new Array(tracks.length);
+    let nextLogIndex = 0;
+    let nextTrackIndex = 0;
+    const isCurrent = () => isMatchingActive && currentJob === job && epoch === workflowEpoch;
+    const normalizeSearchPart = (value) => String(value || "").trim().toLowerCase();
+    const searchKey = (track, artists) =>
+      JSON.stringify([
+        normalizeSearchPart(track.title),
+        artists === null ? "title-only" : (artists || []).map(normalizeSearchPart),
+      ]);
+
+    const cachedSearch = (track, artists) => {
+      const key = searchKey(track, artists);
+      let searchPromise = searchCache.get(key);
+      if (!searchPromise) {
+        searchPromise = Promise.resolve().then(() =>
+          !isCurrent() ? [] : artists === null
+            ? window.__ytmTransferAdapter.searchSongs(track.title)
+            : window.__ytmTransferAdapter.searchSongs(track.title, artists)
+        );
+        searchCache.set(key, searchPromise);
+      }
+      return searchPromise;
+    };
+
+    const flushMatchingLogs = () => {
+      while (pendingLogs[nextLogIndex]) {
+        for (const line of pendingLogs[nextLogIndex]) appendMatchingLog(line);
+        pendingLogs[nextLogIndex] = null;
+        nextLogIndex += 1;
+      }
+    };
+
+    const matchTrack = async (i) => {
+      if (!isCurrent()) return;
       const t = tracks[i].source;
       const artistStr = (t.artists || []).join(", ") || "Unknown Artist";
-      appendMatchingLog(`[${i + 1}/${tracks.length}] ${artistStr} - ${t.title}`);
-
       let rawCandidates = [];
       try {
-        rawCandidates = await window.__ytmTransferAdapter.searchSongs(t.title, t.artists);
+        rawCandidates = await cachedSearch(t, t.artists || []);
+        // retry without restrictive artist credits
+        const bestInitialScore = (rawCandidates || []).reduce((best, candidate, rank) => {
+          const scored = scoreCandidate(
+            t,
+            { ...candidate, artists: Array.isArray(candidate.artists) ? candidate.artists.slice() : candidate.artists },
+            rank
+          );
+          return Math.max(best, scored.score || 0);
+        }, 0);
+        if (isCurrent() && bestInitialScore < 0.82 && (t.artists || []).length) {
+          const titleOnlyCandidates = await cachedSearch(t, null);
+          const merged = new Map();
+          for (const candidate of rawCandidates || []) {
+            merged.set(candidate.video_id || JSON.stringify([candidate.title, candidate.artists]), candidate);
+          }
+          for (const candidate of titleOnlyCandidates || []) {
+            const key = candidate.video_id || JSON.stringify([candidate.title, candidate.artists]);
+            if (!merged.has(key)) merged.set(key, candidate);
+          }
+          rawCandidates = [...merged.values()];
+        }
       } catch (e) {
         logDebug(`search error on track ${i}`, e.message);
       }
-      if (!isMatchingActive || currentJob !== job || epoch !== workflowEpoch) return;
+      if (!isCurrent()) return;
 
-      const scored = (rawCandidates || []).map((c, r) => scoreCandidate(t, c, r));
+      // score copies of cached candidates
+      const scored = (rawCandidates || []).map((c, r) =>
+        scoreCandidate(
+          t,
+          { ...c, artists: Array.isArray(c.artists) ? c.artists.slice() : c.artists },
+          r
+        )
+      );
       scored.sort((a, b) => (b.score || 0) - (a.score || 0));
 
       tracks[i].candidates = scored;
+      let resultLog = "  -> No match found";
       if (scored.length && scored[0].confidence === "high") {
         tracks[i].selected_candidate = scored[0];
         tracks[i].match_type = "high";
         const candArtist = (scored[0].artists || []).join(", ") || "Unknown";
-        appendMatchingLog(`  -> Matched: ${candArtist} - ${scored[0].title} (${Math.round(scored[0].score * 100)}%)`);
+        resultLog = `  -> Matched: ${candArtist} - ${scored[0].title} (${Math.round(scored[0].score * 100)}%)`;
       } else if (scored.length && scored[0].confidence === "review") {
         tracks[i].selected_candidate = scored[0];
         tracks[i].match_type = "review";
         const candArtist = (scored[0].artists || []).join(", ") || "Unknown";
-        appendMatchingLog(`  -> Review: ${candArtist} - ${scored[0].title} (${Math.round(scored[0].score * 100)}%)`);
+        resultLog = `  -> Review: ${candArtist} - ${scored[0].title} (${Math.round(scored[0].score * 100)}%)`;
       } else {
         tracks[i].selected_candidate = scored[0] || null;
         tracks[i].match_type = "unmatched";
-        appendMatchingLog(`  -> No match found`);
       }
 
-      job.progress.current = i + 1;
-      job.progress.matched = tracks.filter((x) => x.match_type === "high").length;
-      job.progress.needs_review = tracks.filter((x) => x.match_type === "review").length;
-      job.progress.unmatched = tracks.filter((x) => x.match_type === "unmatched").length;
-
+      pendingLogs[i] = [`[${i + 1}/${tracks.length}] ${artistStr} - ${t.title}`, resultLog];
+      flushMatchingLogs();
+      job.progress.current += 1;
+      if (tracks[i].match_type === "high") job.progress.matched += 1;
+      else if (tracks[i].match_type === "review") job.progress.needs_review += 1;
+      job.progress.unmatched = tracks.length - job.progress.matched - job.progress.needs_review;
       updateMatchingProgress();
       updateNavButtonText();
-    }
+    };
 
-    if (isMatchingActive && currentJob === job && epoch === workflowEpoch) {
+    const worker = async () => {
+      while (isCurrent()) {
+        const i = nextTrackIndex++;
+        if (i >= tracks.length) return;
+        await matchTrack(i);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(MATCH_CONCURRENCY, tracks.length) }, worker));
+
+    if (isCurrent()) {
       appendMatchingLog(`Matching complete. Transitioning to review...`);
       isMatchingActive = false;
       activeView = "review";
@@ -1351,6 +1441,7 @@
     const allTracks = getSortedReviewTracks(currentJob.tracks || [], reviewSortOrder);
     const total = allTracks.length;
     const maxPages = Math.ceil(total / REVIEW_PAGE_SIZE) || 1;
+    if (reviewPage >= maxPages) reviewPage = maxPages - 1;
     const startIndex = reviewPage * REVIEW_PAGE_SIZE;
     const pageTracks = allTracks.slice(startIndex, startIndex + REVIEW_PAGE_SIZE);
 
@@ -1393,6 +1484,7 @@
             </td>
             <td>
               <span class="ytm-spot-pill ${pillClass}">${pillText}</span>
+              ${cand?.review_reason ? `<div style="margin-top:5px; font-size:11px; color:#d8b969;">${escapeHtml(cand.review_reason)}</div>` : ""}
             </td>
             <td>
               <button class="ytm-spot-btn ytm-spot-skip-btn" data-idx="${origIdx}" style="padding:3px 8px; font-size:11px;">
@@ -1405,6 +1497,7 @@
       .join("");
 
     const activePrivacy = currentJob.privacy || "PRIVATE";
+    const hasExistingDestination = Boolean(currentJob.created_playlist_id);
 
     container.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -1414,25 +1507,36 @@
         </div>
         <div style="display:flex; gap:8px;">
           <button id="ytm-spot-back-home" class="ytm-spot-btn">Back</button>
-          <button id="ytm-spot-start-transfer" class="ytm-spot-btn ytm-spot-btn-green">Transfer to YouTube Music</button>
+          <button id="ytm-spot-start-transfer" class="ytm-spot-btn ytm-spot-btn-green" ${hasExistingDestination ? "disabled" : ""}>${hasExistingDestination ? "Transfer paused" : "Transfer to YouTube Music"}</button>
         </div>
       </div>
 
-      <div class="ytm-spot-section" style="display:flex; gap:12px; align-items:center; padding:10px 14px; margin-bottom:10px;">
+      ${transferError ? `<div role="alert" style="margin-bottom:10px; padding:10px 12px; border:1px solid rgba(231,76,60,.55); border-radius:8px; background:rgba(231,76,60,.12); color:#ffb3aa; line-height:1.4;">${escapeHtml(transferError)}${hasExistingDestination ? ` <a href="https://music.youtube.com/playlist?list=${encodeURIComponent(currentJob.created_playlist_id)}" target="_blank" rel="noreferrer" style="color:#9ad1ff;">Open the existing playlist</a>.` : ""}</div>` : ""}
+
+      <div class="ytm-spot-section" style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 14px; margin-bottom:10px;">
         <input id="ytm-dest-title" class="ytm-spot-input" value="${escapeHtml(currentJob.playlist_title)}" placeholder="Destination Playlist Title" style="flex:1;" />
-        <select id="ytm-review-sort" class="ytm-spot-input" style="width:180px;">
+        <select id="ytm-review-sort" aria-label="Review sort order" class="ytm-spot-input" style="width:180px;">
           <option value="review" ${reviewSortOrder === "review" ? "selected" : ""}>Needs Review First</option>
           <option value="confident" ${reviewSortOrder === "confident" ? "selected" : ""}>Confident Matches First</option>
           <option value="original" ${reviewSortOrder === "original" ? "selected" : ""}>Original Track Order</option>
         </select>
-        <select id="ytm-dest-privacy" class="ytm-spot-input" style="width:130px;">
+        <select id="ytm-auto-skip-threshold" class="ytm-spot-input" style="width:145px;" aria-label="Skip matches below this score" title="Choose a threshold, then click Skip matches">
+          <option value="70">Skip below 70%</option>
+          <option value="60">Skip below 60%</option>
+          <option value="50">Skip below 50%</option>
+          <option value="custom">Custom threshold</option>
+        </select>
+        <input id="ytm-auto-skip-custom" class="ytm-spot-input" type="number" min="1" max="99" step="1" placeholder="%" aria-label="Custom auto skip percentage" style="width:64px;" hidden disabled />
+        <button id="ytm-auto-skip-btn" class="ytm-spot-btn" style="padding-left:9px; padding-right:9px;">Skip matches</button>
+        <select id="ytm-dest-privacy" aria-label="Playlist privacy" class="ytm-spot-input" style="width:130px;">
           <option value="PRIVATE" ${activePrivacy === "PRIVATE" ? "selected" : ""}>Private</option>
           <option value="UNLISTED" ${activePrivacy === "UNLISTED" ? "selected" : ""}>Unlisted</option>
           <option value="PUBLIC" ${activePrivacy === "PUBLIC" ? "selected" : ""}>Public</option>
         </select>
       </div>
 
-      <div style="flex:1; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:8px; margin-bottom:8px;">
+      <div id="ytm-skip-notice" role="status" style="color:#aaa; font-size:12px; margin-bottom:8px;">${escapeHtml(currentJob.auto_skip_notice || "Threshold applies when you click Skip matches.")}</div>
+      <div id="ytm-review-scroll" style="flex:1; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:8px; margin-bottom:8px;">
         <table class="ytm-spot-table">
           <thead>
             <tr>
@@ -1470,7 +1574,10 @@
       `
           : ""
       }
-    `;
+      `;
+
+    const restoredScroll = document.getElementById("ytm-review-scroll");
+    if (restoredScroll) restoredScroll.scrollTop = reviewScrollTop;
 
     document.getElementById("ytm-spot-back-home").onclick = () => {
       activeView = "home";
@@ -1480,6 +1587,15 @@
     document.getElementById("ytm-spot-start-transfer").onclick = () => {
       const title = document.getElementById("ytm-dest-title")?.value?.trim() || currentJob.playlist_title;
       const privacy = document.getElementById("ytm-dest-privacy")?.value || "PRIVATE";
+      if (currentJob.created_playlist_id) {
+        transferError = "Transfer is paused because a destination playlist already exists. Review it before starting another transfer.";
+        renderReview(container);
+        return;
+      }
+      currentJob.playlist_title = title;
+      currentJob.privacy = privacy;
+      reviewScrollTop = container.querySelector("#ytm-review-scroll")?.scrollTop || 0;
+      transferError = null;
       executeTransfer(title, privacy);
     };
 
@@ -1489,6 +1605,49 @@
         reviewSortOrder = e.target.value;
         reviewPage = 0;
         renderReview(container);
+      };
+    }
+
+    const autoSkipEl = document.getElementById("ytm-auto-skip-threshold");
+    const autoSkipCustomEl = document.getElementById("ytm-auto-skip-custom");
+    if (autoSkipEl && autoSkipCustomEl) {
+      autoSkipEl.value = currentJob.auto_skip_choice || "70";
+      autoSkipCustomEl.value = currentJob.auto_skip_custom || "";
+      const syncThreshold = () => {
+        autoSkipCustomEl.disabled = autoSkipEl.value !== "custom";
+        autoSkipCustomEl.hidden = autoSkipCustomEl.disabled;
+        currentJob.auto_skip_choice = autoSkipEl.value;
+      };
+      autoSkipEl.onchange = syncThreshold;
+      autoSkipCustomEl.oninput = () => { currentJob.auto_skip_custom = autoSkipCustomEl.value; };
+      syncThreshold();
+    }
+    const autoSkipBtn = document.getElementById("ytm-auto-skip-btn");
+    if (autoSkipBtn && autoSkipEl && autoSkipCustomEl) {
+      autoSkipBtn.onclick = () => {
+        const rawThreshold = autoSkipEl.value === "custom" ? autoSkipCustomEl.value : autoSkipEl.value;
+        const threshold = Number(rawThreshold);
+        if (!Number.isFinite(threshold) || threshold < 1 || threshold > 99) {
+          const notice = document.getElementById("ytm-skip-notice");
+          if (notice) notice.textContent = "Choose a percentage from 1 to 99.";
+          autoSkipCustomEl.focus();
+          return;
+        }
+        const scrollTop = container.querySelector("#ytm-review-scroll")?.scrollTop || 0;
+        reviewScrollTop = scrollTop;
+        let skipped = 0;
+        for (const track of currentJob.tracks || []) {
+          const score = (track.selected_candidate?.score || 0) * 100;
+          if (track.status !== "skipped" && score < threshold) {
+            track.status = "skipped";
+            skipped += 1;
+          }
+        }
+        currentJob.auto_skip_notice = `Skipped ${skipped} ${skipped === 1 ? "song" : "songs"} below ${threshold}%. Use Include to restore any skipped song.`;
+        logDebug(`auto-skipped ${skipped} tracks below ${threshold}%`);
+        renderReview(container);
+        const refreshedScroll = container.querySelector("#ytm-review-scroll");
+        if (refreshedScroll) refreshedScroll.scrollTop = scrollTop;
       };
     }
 
@@ -1512,8 +1671,12 @@
       btn.onclick = () => {
         const idx = parseInt(btn.getAttribute("data-idx"), 10);
         if (currentJob.tracks[idx]) {
+          const scrollTop = container.querySelector("#ytm-review-scroll")?.scrollTop || 0;
+          reviewScrollTop = scrollTop;
           currentJob.tracks[idx].status = currentJob.tracks[idx].status === "skipped" ? "included" : "skipped";
           renderReview(container);
+          const refreshedScroll = container.querySelector("#ytm-review-scroll");
+          if (refreshedScroll) refreshedScroll.scrollTop = scrollTop;
         }
       };
     });
@@ -1521,6 +1684,12 @@
 
   async function executeTransfer(playlistTitle, privacy) {
     if (!currentJob || isTransferActive) return;
+    if (currentJob.created_playlist_id) {
+      transferError = "Transfer is paused because a destination playlist already exists. Review it before starting another transfer.";
+      activeView = "review";
+      renderView();
+      return;
+    }
     const epoch = ++workflowEpoch;
     const job = currentJob;
     activeView = "transferring";
@@ -1536,7 +1705,7 @@
       const videoIds = validTracks.map((t) => t.selected_candidate.video_id);
 
       if (!videoIds.length) {
-        alert("No valid tracks to transfer.");
+        transferError = "No valid tracks to transfer. Select at least one matched track or include a skipped track.";
         activeView = "review";
         isTransferActive = false;
         updateNavButtonText();
@@ -1545,29 +1714,23 @@
       }
 
       logDebug(`creating destination playlist "${playlistTitle}" on YouTube Music`);
-      const initialBatch = videoIds.slice(0, 50);
-      const remainingBatch = videoIds.slice(50);
-
       const playlistId = await window.__ytmTransferAdapter.createPlaylist(
         playlistTitle,
         job.playlist_description || "Transferred via YouTube Music Desktop",
-        privacy,
-        initialBatch
+        privacy
       );
       if (epoch !== workflowEpoch || currentJob !== job) return;
 
       job.created_playlist_id = playlistId;
-      logDebug(
-        `playlist created id=${playlistId}, initial=${initialBatch.length}, remaining=${remainingBatch.length}`
-      );
+      logDebug(`playlist created id=${playlistId}, tracks=${videoIds.length}`);
 
-      let added = initialBatch.length;
+      let added = 0;
       let failed = 0;
 
-      if (remainingBatch.length) {
+      if (videoIds.length) {
         const res = await window.__ytmTransferAdapter.addPlaylistItems(
           playlistId,
-          remainingBatch,
+          videoIds,
           (current, total) => {
             if (epoch !== workflowEpoch || currentJob !== job) return;
             const totalDone = added + current;
@@ -1584,20 +1747,26 @@
         if (epoch !== workflowEpoch || currentJob !== job) return;
         added += res.added;
         failed += res.failed;
+        job.uncertain_count = res.unknown || 0;
+        job.unattempted_count = res.unattempted || 0;
+      job.transfer_incomplete = res.complete === false;
       }
 
       job.transferred_count = added;
       job.failed_count = failed;
-      logDebug(`transfer complete: ${added} added, ${failed} failed`);
+      logDebug(
+        `transfer ${job.transfer_incomplete ? "paused" : "complete"}: ${added} added, ${failed} failed, ${job.uncertain_count || 0} unconfirmed, ${job.unattempted_count || 0} not attempted`
+      );
 
       isTransferActive = false;
+      transferError = null;
       activeView = "complete";
       updateNavButtonText();
       renderView();
     } catch (err) {
       if (epoch !== workflowEpoch || currentJob !== job) return;
       logDebug("transfer execution failed", err.message);
-      alert(`Transfer failed: ${err.message}`);
+      transferError = `Transfer paused: ${err.message}`;
       isTransferActive = false;
       activeView = "review";
       updateNavButtonText();
@@ -1609,11 +1778,11 @@
     container.innerHTML = `
       <div style="text-align:center; padding:50px 20px;">
         <h3 style="margin-top:0;">Creating YouTube Music Playlist</h3>
-        <div id="ytm-transfer-label" style="font-size:14px; color:#aaa; margin-bottom:8px;">Preparing batches...</div>
+        <div id="ytm-transfer-label" style="font-size:14px; color:#aaa; margin-bottom:8px;">Creating your destination playlist…</div>
         <div class="ytm-spot-progress-bar">
           <div id="ytm-transfer-fill" class="ytm-spot-progress-fill"></div>
         </div>
-        <div style="font-size:12px; color:#777; margin-top:14px;">Adding songs in safe batches of 25 to preserve order...</div>
+        <div style="font-size:12px; color:#aaa; margin-top:14px;">Once created, songs are added in playlist order.</div>
       </div>
     `;
   }
@@ -1622,14 +1791,19 @@
     const pid = currentJob?.created_playlist_id;
     const added = currentJob?.transferred_count || 0;
     const failed = currentJob?.failed_count || 0;
+    const uncertain = currentJob?.uncertain_count || 0;
+    const unattempted = currentJob?.unattempted_count || 0;
+    const incomplete = currentJob?.transfer_incomplete === true;
 
     container.innerHTML = `
       <div style="text-align:center; padding:40px 20px;">
-        <div style="font-size:18px; color:#2ecc71; margin-bottom:12px; font-weight:700;">Done</div>
-        <h2 style="margin:0 0 8px 0; color:#2ecc71;">Transfer Complete!</h2>
+        <div style="font-size:18px; color:${incomplete ? "#f1c40f" : "#2ecc71"}; margin-bottom:12px; font-weight:700;">${incomplete ? "Transfer Paused" : "Done"}</div>
+        <h2 style="margin:0 0 8px 0; color:${incomplete ? "#f1c40f" : "#2ecc71"};">${incomplete ? "Transfer needs attention" : "Transfer Complete!"}</h2>
         <div style="font-size:14px; color:#ccc; margin-bottom:24px;">
-          Successfully added <strong>${added}</strong> songs to your YouTube Music library.
+          Confirmed <strong>${added}</strong> songs added to your YouTube Music playlist.
           ${failed > 0 ? `<br/><span style="color:#f1c40f;">(${failed} items could not be added)</span>` : ""}
+          ${uncertain > 0 ? `<br/><span style="color:#f1c40f;">${uncertain} items have an unconfirmed result. They were not retried to avoid duplicates.</span>` : ""}
+          ${unattempted > 0 ? `<br/><span style="color:#aaa;">${unattempted} items were not attempted.</span>` : ""}
         </div>
 
         <div style="display:flex; justify-content:center; gap:12px;">

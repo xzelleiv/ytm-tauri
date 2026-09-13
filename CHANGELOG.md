@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.5 - 2026-09-13
+
+### Features
+
+- Added **Playlist Manager** directly to playlist pages: search every song, select across pages, review duplicates and unavailable entries, and copy, move, remove, or reorder songs in bulk.
+- Added built-in Spotify sign-in for private playlists and Liked Songs, with encrypted session persistence across app launches and connected-profile lookup.
+- Added ListenBrainz token setup alongside Last.fm scrobbling.
+- Added a keyboard shortcut reference with **Ctrl+H**.
+
+### UI/UX Improvements
+
+- Added album thumbnails, private destination search, Shift-click range selection, and exact counts for songs already in the destination.
+- Added configurable transfer auto-skip thresholds, clearer recording-version warnings, and review controls that preserve the current position.
+- Fixed unreadable transfer dropdown options in the dark interface.
+- Added in-app updater download progress, verification status, and retry feedback in **Settings → System**.
+- Added cinematic, studio, and luminescent synced-lyrics styles.
+
+### Fixes & Reliability
+
+- Batched playlist copying, moving, and removal in groups of up to 25; source entries are removed only after their destination copy is confirmed.
+- Preserved unfinished selections after failed playlist operations and rebuilt their review plans for retry.
+- Improved Spotify pagination, matching fallback searches, and matching concurrency; authenticated imports no longer silently fall back to truncated previews.
+- Corrected playlist creation fields and surfaced actionable transfer errors without automatically replaying uncertain writes.
+- Hardened lyric timing, media-element rebinding, duration matching, and LRCLib fallback behavior.
+- Fixed scrobbling setup and serialized encrypted credential updates for independent providers.
+- Improved playback-speed, autoplay, disliked-song, and SponsorBlock behavior after player changes.
+- Avoided repeated startup update prompts for versions already offered, while keeping manual checks available.
+
+### Credits
+
+- xzelleiv
+- Henix (original creator)
+- Pear Desktop
+
+> Windows may show an "Unknown publisher" notice because this community release is not code-signed. In-app updater packages are separately signature-verified.
+
 ## 0.1.8 - 2026-07-26
 
 ### Fixes

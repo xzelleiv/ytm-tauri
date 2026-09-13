@@ -41,6 +41,7 @@ impl ScrobbleController {
         thread::spawn(move || {
             let client = Client::builder()
                 .timeout(Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .ok();
             let mut current: Option<CurrentTrack> = None;
@@ -143,8 +144,8 @@ fn should_scrobble(track: &TrackMetadata, listened: Duration) -> bool {
     if duration <= 30 {
         return false;
     }
-    let threshold = (duration / 2).min(240);
-    listened.as_secs() >= threshold
+    let threshold = Duration::from_secs(duration).div_f64(2.0).min(Duration::from_secs(240));
+    listened >= threshold
 }
 
 fn send_lastfm_now_playing(
@@ -217,6 +218,7 @@ fn add_optional_lastfm_metadata(params: &mut BTreeMap<String, String>, track: &T
 }
 
 fn send_lastfm(client: &Client, mut params: BTreeMap<String, String>, secret: &str) -> bool {
+    let is_scrobble = params.get("method").is_some_and(|method| method == "track.scrobble");
     let signature = lastfm_signature(&params, secret);
     params.insert("api_sig".to_string(), signature);
     params.insert("format".to_string(), "json".to_string());
@@ -226,8 +228,22 @@ fn send_lastfm(client: &Client, mut params: BTreeMap<String, String>, secret: &s
         .form(&params)
         .send()
         .ok()
+        .filter(|response| response.status().is_success())
         .and_then(|response| response.json::<serde_json::Value>().ok())
-        .is_some_and(|body| body.get("error").is_none())
+        .is_some_and(|body| lastfm_accepted(&body, is_scrobble))
+}
+
+fn lastfm_accepted(body: &serde_json::Value, is_scrobble: bool) -> bool {
+    if body.get("error").is_some() {
+        return false;
+    }
+    if is_scrobble {
+        body.pointer("/scrobbles/@attr/accepted")
+            .is_some_and(|value| value.as_str() == Some("1") || value.as_u64() == Some(1))
+    } else {
+        body.pointer("/nowplaying/ignoredMessage/code")
+            .is_some_and(|value| value.as_str() == Some("0") || value.as_u64() == Some(0))
+    }
 }
 
 fn send_listenbrainz(
@@ -261,10 +277,12 @@ fn send_listenbrainz(
                 "media_player": CLIENT_NAME,
                 "submission_client": CLIENT_NAME,
                 "submission_client_version": env!("CARGO_PKG_VERSION"),
-                "duration_ms": track.duration_seconds.map(|value| value * 1000),
             }
         }
     });
+    if let Some(duration) = track.duration_seconds.and_then(|value| value.checked_mul(1000)) {
+        listen["track_metadata"]["additional_info"]["duration_ms"] = json!(duration);
+    }
     if let Some(album) = track
         .album
         .as_deref()
@@ -288,11 +306,13 @@ fn send_listenbrainz(
 }
 
 fn lastfm_credentials(settings: &settings::Settings) -> Option<(String, String, String)> {
-    let api_key = std::env::var("YTM_LASTFM_API_KEY").ok()?;
-    let secret = std::env::var("YTM_LASTFM_API_SECRET").ok()?;
+    let stored = crate::scrobble_auth::load();
+    let api_key = stored.lastfm_api_key.or_else(|| std::env::var("YTM_LASTFM_API_KEY").ok())?;
+    let secret = stored.lastfm_api_secret.or_else(|| std::env::var("YTM_LASTFM_API_SECRET").ok())?;
     let session_key = settings
         .lastfm_session_key
         .clone()
+        .or(stored.lastfm_session_key)
         .or_else(|| std::env::var("YTM_LASTFM_SESSION_KEY").ok())?;
     if api_key.trim().is_empty() || secret.trim().is_empty() || session_key.trim().is_empty() {
         return None;
@@ -352,6 +372,17 @@ mod tests {
         assert!(should_scrobble(&track(200), Duration::from_secs(100)));
         assert!(!should_scrobble(&track(900), Duration::from_secs(239)));
         assert!(should_scrobble(&track(900), Duration::from_secs(240)));
+        assert!(!should_scrobble(&track(31), Duration::from_secs(15)));
+        assert!(should_scrobble(&track(31), Duration::from_millis(15500)));
+    }
+
+    #[test]
+    fn lastfm_requires_explicit_acceptance() {
+        assert!(!lastfm_accepted(&json!({}), true));
+        assert!(!lastfm_accepted(&json!({"scrobbles":{"@attr":{"accepted":"0","ignored":"1"}}}), true));
+        assert!(lastfm_accepted(&json!({"scrobbles":{"@attr":{"accepted":"1"}}}), true));
+        assert!(!lastfm_accepted(&json!({"nowplaying":{"ignoredMessage":{"code":"1"}}}), false));
+        assert!(lastfm_accepted(&json!({"nowplaying":{"ignoredMessage":{"code":"0"}}}), false));
     }
 
     #[test]

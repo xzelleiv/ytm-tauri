@@ -256,7 +256,7 @@ pub fn parse_text_lines(text: &str) -> Vec<SourceTrack> {
             let a = line[..dash_pos].trim();
             let t = line[dash_pos + 3..].trim();
             (Some(a), t)
-        } else if let Some(by_pos) = line.to_lowercase().find(" by ") {
+        } else if let Some(by_pos) = find_case_insensitive(line, " by ") {
             let t = line[..by_pos].trim();
             let a = line[by_pos + 4..].trim();
             (Some(a), t)
@@ -291,6 +291,17 @@ pub fn parse_text_lines(text: &str) -> Vec<SourceTrack> {
     tracks
 }
 
+fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    haystack.char_indices().find_map(|(index, _)| {
+        let candidate = haystack.get(index..)?.get(..needle.len())?;
+        candidate.eq_ignore_ascii_case(needle).then_some(index)
+    })
+}
+
 fn parse_duration_string(s: &str) -> Option<u64> {
     let s = s.trim();
     if let Ok(ms) = s.parse::<u64>() {
@@ -302,12 +313,16 @@ fn parse_duration_string(s: &str) -> Option<u64> {
         if parts.len() == 2 {
             let mins = parts[0].parse::<u64>().ok()?;
             let secs = parts[1].parse::<u64>().ok()?;
-            return Some((mins * 60 + secs) * 1000);
+            return mins.checked_mul(60)?.checked_add(secs)?.checked_mul(1000);
         } else if parts.len() == 3 {
             let hours = parts[0].parse::<u64>().ok()?;
             let mins = parts[1].parse::<u64>().ok()?;
             let secs = parts[2].parse::<u64>().ok()?;
-            return Some((hours * 3600 + mins * 60 + secs) * 1000);
+            return hours
+                .checked_mul(3600)?
+                .checked_add(mins.checked_mul(60)?)?
+                .checked_add(secs)?
+                .checked_mul(1000);
         }
     }
 
@@ -336,5 +351,20 @@ mod tests {
         assert_eq!(tracks[0].title, "Solomon");
         assert_eq!(tracks[0].artists, vec!["Munimuni"]);
         assert_eq!(tracks[0].duration_ms, 378000);
+    }
+
+    #[test]
+    fn parse_by_is_safe_for_unicode_before_separator() {
+        let tracks = parse_text_lines("İ by Artist");
+
+        assert_eq!(tracks[0].title, "İ");
+        assert_eq!(tracks[0].artists, vec!["Artist"]);
+    }
+
+    #[test]
+    fn overflowing_clock_duration_is_ignored() {
+        let tracks = parse_text_lines("Artist - Track (18446744073709551615:59)");
+
+        assert_eq!(tracks[0].duration_ms, 0);
     }
 }

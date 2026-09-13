@@ -7,6 +7,7 @@ mod notifications;
 mod platform;
 mod presence;
 mod scrobble;
+mod scrobble_auth;
 mod settings;
 mod spotify;
 mod spotify_bridge;
@@ -51,6 +52,9 @@ const CROSSFADE_SCRIPT: &str = include_str!("crossfade_probe.js");
 const SETTINGS_PROBE_SCRIPT: &str = include_str!("settings_probe.js");
 const YTM_TRANSFER_SCRIPT: &str = include_str!("ytm_transfer_probe.js");
 const SPOTIFY_TRANSFER_SCRIPT: &str = include_str!("spotify_transfer_probe.js");
+const PLAYLIST_MANAGER_DATA_SCRIPT: &str = include_str!("playlist_manager_data.js");
+const PLAYLIST_MANAGER_SCRIPT: &str = include_str!("playlist_manager_probe.js");
+const SHORTCUT_HELP_SCRIPT: &str = include_str!("shortcut_help_probe.js");
 const AUTH_RECOVERY_SCRIPT: &str = include_str!("auth_recovery_probe.js");
 const TRACK_PROBE_SCRIPT: &str = include_str!("track_probe.js");
 
@@ -84,6 +88,11 @@ const AD_BLOCK_SELF_TEST_SCRIPT: &str = r#"
 pub fn run() {
     let _ = platform::register_app_identity();
     let settings = settings::load();
+    let stored_scrobble = scrobble_auth::load();
+    if let Ok(mut value) = settings.lock() {
+        value.lastfm_session_key = stored_scrobble.lastfm_session_key.clone();
+        value.listenbrainz_token = stored_scrobble.listenbrainz_token.clone();
+    }
     settings::update(&settings, |value| {
         value.launch_at_startup = platform::startup_enabled()
     });
@@ -312,7 +321,7 @@ fn initialization_script(settings: &settings::Settings) -> String {
         page_feature_config(settings)
     );
     let page_features = format!(
-        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{CROSSFADE_SCRIPT}\n{SETTINGS_PROBE_SCRIPT}\n{YTM_TRANSFER_SCRIPT}\n{SPOTIFY_TRANSFER_SCRIPT}"
+        "{FEATURE_PROBE_SCRIPT}\n{AUDIO_ENGINE_SCRIPT}\n{SYNCED_LYRICS_SCRIPT}\n{OUTPUT_DEVICE_SCRIPT}\n{EQUALIZER_SCRIPT}\n{PRECISE_VOLUME_SCRIPT}\n{EXPONENTIAL_VOLUME_SCRIPT}\n{PLAYBACK_SPEED_SCRIPT}\n{SKIP_DISLIKED_SCRIPT}\n{NAVIGATION_SCRIPT}\n{SPONSORBLOCK_SCRIPT}\n{BLUR_NAV_BAR_SCRIPT}\n{DISABLE_AUTOPLAY_SCRIPT}\n{VIDEO_TOGGLE_SCRIPT}\n{AMBIENT_MODE_SCRIPT}\n{CROSSFADE_SCRIPT}\n{SETTINGS_PROBE_SCRIPT}\n{YTM_TRANSFER_SCRIPT}\n{SPOTIFY_TRANSFER_SCRIPT}\n{PLAYLIST_MANAGER_DATA_SCRIPT}\n{PLAYLIST_MANAGER_SCRIPT}\n{SHORTCUT_HELP_SCRIPT}"
     );
 
     if std::env::var_os("YT_MUSIC_ADBLOCK_SELF_TEST").is_some() {
