@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign without publishing a release
+        type: boolean
+        default: true
   push:
     tags:
       - "v*"
@@ -24,6 +29,26 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify updater signing key
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw "TAURI_SIGNING_PRIVATE_KEY secret is not set." }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD secret is not set." }
+          $probe = Join-Path $env:RUNNER_TEMP "signing-probe.txt"
+          Set-Content -LiteralPath $probe -Value "signing probe"
+          npx tauri signer sign $probe
+          if ($LASTEXITCODE -ne 0) { throw "Updater signing key or password is invalid." }
+
+      - name: Build signed bundles without publishing
+        if: ${{ inputs.dry_run }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run build:tauri
+
       - name: Validate release version
         if: github.ref_type == 'tag'
         shell: pwsh
@@ -34,6 +59,7 @@ jobs:
           }
 
       - name: Build and publish updater release
+        if: ${{ !inputs.dry_run }}
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
