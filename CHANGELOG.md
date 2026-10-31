@@ -1,27 +1,33 @@
 # Changelog
 
-## Unreleased
+## 0.2.6 - 2026-11-01
+
+### Features
+
+- Added settings search across every tab with **Ctrl+F**, plus a remembered last tab and arrow-key tab navigation.
+- Added a live Discord connection status to **Settings → General**.
+- Added **Ctrl+Wheel** zoom, **F5** reload, numpad zoom keys, and an on-screen zoom level indicator.
+- Synced lyrics from LRCLib and YouTube Music are now fetched, matched, and parsed natively for faster, more reliable results.
 
 ### UI/UX Improvements
 
-- Added settings search across every tab (**Ctrl+F** while settings are open), a remembered last tab, arrow-key tab navigation, and visible focus rings.
-- Settings no longer jump back to the top or lose focus when a toggle changes.
-- Added **Ctrl+Wheel** zoom, **F5** reload, and numpad zoom keys.
-- Right-click now works inside text fields so paste is available again.
-- The settings header shows the real app version instead of a hardcoded one.
+- Refreshed the **Playlist Manager**: highlighted selections, sticky column headers, a loading progress bar, placeholder rows while loading, clearer empty states, color-coded status messages, and confirmation toasts after changes.
+- Added **Ctrl+F** and **/** shortcuts to jump to playlist search, with **Esc** clearing the search before closing.
+- Polished the Spotify transfer dialog, keyboard shortcut reference, and settings with smoother animations and visible keyboard focus.
+- Settings no longer jump back to the top or lose focus when a toggle changes, and the header shows the installed version.
+- Right-click works inside text fields again, so paste is available.
+- Removed the white flash when the app starts.
+- Song-change notifications are skipped while the app window is in focus.
 
 ### Fixes & Reliability
 
-- Fixed the window getting stuck when switching back from another app: in-app shortcuts no longer register and unregister system-wide hotkeys on every focus change, and they no longer steal Ctrl+R, Ctrl+0, and similar keys from other apps.
-- Fixed update status requests stalling every settings change for 15 seconds.
-- Slow lyrics and network requests no longer block settings toggles queued behind them.
-- Throttled the settings header watcher, which ran on every page mutation, to reduce jank.
-- Fixed the orphaned-overlay cleanup misjudging fixed-position dialogs, and it now also runs when the window regains focus.
-
-### Rust Migration
-
-- Moved LRCLib lookup, title cleanup, fuzzy matching, LRC parsing, and rate-limit backoff from the page into a native `lyrics` module.
-- Moved the YouTube Music lyrics fetch and timed-lyrics parsing into Rust.
+- Fixed the window getting stuck when switching back from another app. In-app shortcuts no longer register system-wide hotkeys, so they also stop taking over **Ctrl+R**, **Ctrl+0**, and similar keys in other apps.
+- Fixed sign-in sometimes ending on the regular YouTube home page instead of YouTube Music.
+- Fixed Discord showing the wrong elapsed time after seeking, and dropped updates when skipping songs quickly.
+- Fixed settings changes stalling for up to 15 seconds after opening the updater status.
+- Slow lyrics and network requests no longer hold up settings changes made at the same time.
+- Reduced background work that could cause stutter during playback, including ad blocking and page watchers that ran on every page change.
+- Fixed an invisible overlay that could leave the page unclickable after a dialog closed.
 
 ## 0.2.5 - 2026-09-13
 

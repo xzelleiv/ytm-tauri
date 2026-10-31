@@ -13,15 +13,15 @@ This app gives YouTube Music its own dedicated Windows window, keeps your normal
 
 - Windows only.
 - Unofficial project, not affiliated with YouTube, Google, Discord, Microsoft, or Tauri.
-- Current release: [`v0.2.5`](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.5).
+- Current release: [`v0.2.6`](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.6).
 
 ## Download
 
 Use the NSIS setup installer for normal installs:
 
-[Download `YouTube.Music_0.2.5_x64-setup.exe`](https://github.com/xzelleiv/ytm-tauri/releases/download/v0.2.5/YouTube.Music_0.2.5_x64-setup.exe)
+[Download `YouTube.Music_0.2.6_x64-setup.exe`](https://github.com/xzelleiv/ytm-tauri/releases/download/v0.2.6/YouTube.Music_0.2.6_x64-setup.exe)
 
-An MSI package is also available on the [release page](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.5).
+An MSI package is also available on the [release page](https://github.com/xzelleiv/ytm-tauri/releases/tag/v0.2.6).
 
 > Windows may show an “Unknown publisher” notice because this community release is not code-signed.
 
