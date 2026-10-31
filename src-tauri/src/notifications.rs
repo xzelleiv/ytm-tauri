@@ -50,6 +50,7 @@ impl NotificationController {
         self.update_with_focus(&sink, track, focused);
     }
 
+    #[cfg(test)]
     pub fn update_with_sink(&self, sink: &dyn NotificationSink, track: &TrackMetadata) {
         self.update_with_focus(sink, track, false);
     }
