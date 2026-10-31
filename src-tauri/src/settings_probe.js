@@ -632,10 +632,24 @@
     }
   }
 
+  const ACTION_TOASTS = {
+    clear_cache: ["Cache cleared, reloading…", "success"],
+    check_updates: ["Checking for updates…", "info"],
+  };
+
   function triggerAction(action) {
-    if (window.__ytmFeatures?.triggerAction) {
-      window.__ytmFeatures.triggerAction(action);
-    }
+    const pending = window.__ytmFeatures?.triggerAction?.(action);
+    if (!pending?.then) return;
+    pending.then((response) => {
+      const zoom = Number(response?.settings?.zoom);
+      if (action.startsWith("zoom_") && Number.isFinite(zoom)) {
+        window.__ytmUi?.toast?.(`Zoom ${Math.round(zoom * 100)}%`, { key: "zoom", duration: 1400 });
+      } else if (ACTION_TOASTS[action]) {
+        window.__ytmUi?.toast?.(ACTION_TOASTS[action][0], { kind: ACTION_TOASTS[action][1], key: action });
+      }
+    }, (error) => {
+      window.__ytmUi?.toast?.(String(error?.message || "Action failed"), { kind: "error", key: action });
+    });
   }
 
   const RESTARTS_REQUIRED = [

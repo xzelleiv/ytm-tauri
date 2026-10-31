@@ -170,7 +170,17 @@
       return;
     }
 
-    const observer = new MutationObserver(run);
+    // coalesce mutation bursts
+    let scheduled = false;
+    const scheduleRun = () => {
+      if (scheduled) return;
+      scheduled = true;
+      window.setTimeout(() => {
+        scheduled = false;
+        run();
+      }, 50);
+    };
+    const observer = new MutationObserver(scheduleRun);
     observer.observe(document.documentElement, {
       attributes: true,
       childList: true,

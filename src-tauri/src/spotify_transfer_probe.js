@@ -452,6 +452,58 @@
       .ytm-spot-pill-high { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
       .ytm-spot-pill-review { background: rgba(241, 196, 15, 0.2); color: #f1c40f; }
       .ytm-spot-pill-low { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
+      .ytm-spot-modal-card {
+        background: linear-gradient(160deg, var(--ytmx-surface-2, #1c1c1f), var(--ytmx-bg, #121214) 52%);
+        border-color: var(--ytmx-border, rgba(255,255,255,0.12));
+        border-radius: var(--ytmx-radius-lg, 16px);
+        box-shadow: var(--ytmx-shadow, 0 24px 48px rgba(0,0,0,0.8));
+        font-family: var(--ytmx-font, Roboto, sans-serif);
+        transform: translateY(8px) scale(0.985);
+        opacity: 0;
+        transition: transform 0.26s var(--ytmx-ease, ease), opacity 0.2s ease;
+      }
+      .ytm-spot-modal-backdrop.open .ytm-spot-modal-card {
+        transform: none;
+        opacity: 1;
+      }
+      .ytm-spot-modal-header h2 {
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .ytm-spot-input {
+        transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+      }
+      .ytm-spot-input:focus {
+        box-shadow: 0 0 0 3px rgba(29, 185, 84, 0.18);
+      }
+      .ytm-spot-card {
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s var(--ytmx-ease, ease);
+      }
+      .ytm-spot-card:hover {
+        transform: translateY(-2px);
+      }
+      .ytm-spot-progress-fill {
+        transition: width 0.3s var(--ytmx-ease, ease);
+      }
+      .ytm-spot-table tbody tr {
+        transition: background 0.12s ease;
+      }
+      .ytm-spot-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.035);
+      }
+      .ytm-spot-btn:focus-visible,
+      .ytm-spot-tab-btn:focus-visible,
+      .ytm-spot-card:focus-visible,
+      .ytm-spot-modal-card button:focus-visible {
+        outline: 2px solid #1ed760;
+        outline-offset: 2px;
+      }
+      .ytm-spot-modal-body::-webkit-scrollbar { width: 8px; }
+      .ytm-spot-modal-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+      @media (prefers-reduced-motion: reduce) {
+        .ytm-spot-modal-card, .ytm-spot-card, .ytm-spot-btn, .ytm-spot-progress-fill { transition: none !important; transform: none !important; }
+      }
     `;
     document.head.appendChild(style);
   }

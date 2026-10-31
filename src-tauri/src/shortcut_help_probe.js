@@ -32,13 +32,18 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-#${OVERLAY_ID} { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; background: rgba(0,0,0,.58); font: 14px system-ui,sans-serif; color: #fff; }
-#${OVERLAY_ID} .ytm-shortcut-panel { width: min(520px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); overflow: auto; padding: 24px; border-radius: 16px; background: #242424; box-shadow: 0 18px 70px rgba(0,0,0,.55); }
-#${OVERLAY_ID} h2 { margin: 0 0 16px; font-size: 20px; }
-#${OVERLAY_ID} ul { display: grid; gap: 10px; list-style: none; padding: 0; margin: 0; }
-#${OVERLAY_ID} li { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-#${OVERLAY_ID} kbd { padding: 3px 7px; border: 1px solid #666; border-bottom-width: 2px; border-radius: 5px; background: #171717; color: #eee; white-space: nowrap; }
-#${OVERLAY_ID} button { margin-top: 20px; padding: 8px 14px; border: 0; border-radius: 8px; background: #fff; color: #161616; cursor: pointer; }
+#${OVERLAY_ID} { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; background: rgba(0,0,0,.6); backdrop-filter: blur(10px); font: 14px var(--ytmx-font, system-ui, sans-serif); color: #fff; animation: ytmx-fade-in .16s ease; }
+#${OVERLAY_ID} .ytm-shortcut-panel { width: min(560px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); overflow: auto; padding: 24px 24px 20px; border: 1px solid var(--ytmx-border, rgba(255,255,255,.1)); border-radius: var(--ytmx-radius-lg, 16px); background: linear-gradient(160deg, var(--ytmx-surface-2, #242424), var(--ytmx-bg, #161616) 60%); box-shadow: var(--ytmx-shadow, 0 18px 70px rgba(0,0,0,.55)); animation: ytmx-pop-in .22s var(--ytmx-ease, ease); }
+#${OVERLAY_ID} h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+#${OVERLAY_ID} .ytm-shortcut-hint { margin: 0 0 18px; color: var(--ytmx-text-3, #999); font-size: 12px; }
+#${OVERLAY_ID} ul { display: grid; gap: 2px; list-style: none; padding: 0; margin: 0; }
+#${OVERLAY_ID} li { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 8px 10px; border-radius: var(--ytmx-radius-sm, 6px); color: var(--ytmx-text-2, #ddd); }
+#${OVERLAY_ID} li:hover { background: rgba(255,255,255,.05); color: #fff; }
+#${OVERLAY_ID} kbd { padding: 3px 8px; border: 1px solid rgba(255,255,255,.18); border-bottom-width: 2px; border-radius: 6px; background: rgba(255,255,255,.06); color: #eee; font: 500 12px var(--ytmx-font, system-ui, sans-serif); white-space: nowrap; }
+#${OVERLAY_ID} button { margin-top: 18px; padding: 9px 18px; border: 0; border-radius: 999px; background: #fff; color: #161616; font-weight: 600; cursor: pointer; transition: transform .15s ease; }
+#${OVERLAY_ID} button:hover { transform: translateY(-1px); }
+#${OVERLAY_ID} button:focus-visible { outline: 2px solid var(--ytmx-accent, #ff3b5c); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { #${OVERLAY_ID}, #${OVERLAY_ID} .ytm-shortcut-panel { animation: none; } }
 `;
     (document.head || document.documentElement || document.body)?.appendChild?.(style);
   }
@@ -69,6 +74,10 @@
     title.id = `${OVERLAY_ID}-title`;
     title.textContent = "Keyboard shortcuts";
     panel.appendChild(title);
+    const hint = document.createElement("p");
+    hint.className = "ytm-shortcut-hint";
+    hint.textContent = "Press Ctrl+H anytime to toggle this list. Media keys work even when the window is in the background.";
+    panel.appendChild(hint);
     const list = document.createElement("ul");
     for (const { key, label } of shortcuts.values()) {
       const row = document.createElement("li");
@@ -138,7 +147,14 @@
   const ZOOM_ACTIONS = new Set(["zoom_in", "zoom_out", "zoom_reset"]);
 
   function runAppAction(action) {
-    window.__ytmFeatures?.triggerAction?.(action)?.catch?.(() => {});
+    const pending = window.__ytmFeatures?.triggerAction?.(action);
+    if (!pending?.then) return;
+    pending.then((response) => {
+      const zoom = Number(response?.settings?.zoom);
+      if (ZOOM_ACTIONS.has(action) && Number.isFinite(zoom)) {
+        window.__ytmUi?.toast?.(`Zoom ${Math.round(zoom * 100)}%`, { key: "zoom", duration: 1400 });
+      }
+    }, () => {});
   }
 
   const onAppShortcut = (event) => {

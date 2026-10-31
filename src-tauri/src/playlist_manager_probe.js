@@ -313,26 +313,72 @@
     style.textContent += `
       .ytm-pm-entry-toolbar:empty { display:none; }
       .ytm-pm-entry-toolbar { display:flex; align-items:center; justify-content:flex-end; padding:8px 0 16px; }
-      #${DIALOG_ID} .ytm-pm-song { display:flex; align-items:center; gap:12px; min-width:0; }
-      #${DIALOG_ID} .ytm-pm-song-text { min-width:0; }
-      #${DIALOG_ID} .ytm-pm-art { display:grid; place-items:center; width:40px; height:40px; flex:none; background:#ffffff0a; border-radius:4px; overflow:hidden; color:#777; }
-      #${DIALOG_ID} .ytm-pm-art img { width:100%; height:100%; object-fit:cover; }
-      #${DIALOG_ID} .ytm-pm-card { background:linear-gradient(145deg,#242424,#181818 42%); }
-      #${DIALOG_ID} .ytm-pm-header { padding:24px 24px 20px; }
-      #${DIALOG_ID} .ytm-pm-toolbar { align-items:center; }
+      #${BUTTON_ID} { border-color:var(--ytmx-border-strong,#ffffff30); background:rgba(255,255,255,.07); transition:background .15s ease, border-color .15s ease, transform .15s var(--ytmx-ease,ease); }
+      #${BUTTON_ID}:hover { background:var(--ytmx-accent-soft,#ffffff25); border-color:var(--ytmx-accent-ring,#ffffff50); transform:translateY(-1px); }
+      #${BUTTON_ID}:active { transform:none; }
+      #${DIALOG_ID} { animation:ytmx-fade-in .18s ease; font-family:var(--ytmx-font,Roboto,Arial,sans-serif); }
+      #${DIALOG_ID} .ytm-pm-card { background:linear-gradient(160deg,var(--ytmx-surface-2,#242424),var(--ytmx-bg,#181818) 48%); border-color:var(--ytmx-border,#ffffff25); border-radius:var(--ytmx-radius-lg,16px); box-shadow:var(--ytmx-shadow,0 24px 80px #0009); animation:ytmx-pop-in .24s var(--ytmx-ease,ease); }
+      #${DIALOG_ID} .ytm-pm-header { padding:22px 24px 18px; border-bottom:1px solid var(--ytmx-border,#ffffff15); }
+      #${DIALOG_ID} .ytm-pm-title > .ytm-pm-muted { text-transform:uppercase; letter-spacing:.08em; font-size:11px; font-weight:600; color:var(--ytmx-accent,#aaa); }
+      #${DIALOG_ID} .ytm-pm-title strong { font-size:24px; font-weight:700; letter-spacing:-.01em; margin-top:2px; }
+      #${DIALOG_ID} .ytm-pm-close { display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,.06); transition:background .15s ease, transform .15s ease; }
+      #${DIALOG_ID} .ytm-pm-close:hover { background:rgba(255,255,255,.14) !important; transform:rotate(90deg); }
+      #${DIALOG_ID} .ytm-pm-progress { height:2px; margin:0; background:transparent; overflow:hidden; }
+      #${DIALOG_ID} .ytm-pm-progress > span { display:block; height:100%; width:0; background:var(--ytmx-accent,#fff); transition:width .25s ease; }
+      #${DIALOG_ID} .ytm-pm-progress[data-indeterminate] > span { width:30%; animation:ytm-pm-indeterminate 1.1s ease-in-out infinite; }
+      @keyframes ytm-pm-indeterminate { from { transform:translateX(-100%); } to { transform:translateX(340%); } }
+      #${DIALOG_ID} .ytm-pm-toolbar { align-items:center; padding:16px 24px 12px; }
       #${DIALOG_ID} .ytm-pm-toolbar .ytm-pm-control > span { display:none; }
-      #${DIALOG_ID} .ytm-pm-search-field { border:0; border-radius:24px; }
-      #${DIALOG_ID} .ytm-pm-search-field input { min-height:44px; }
-      #${DIALOG_ID} .ytm-pm-selection { padding:8px 24px; background:transparent; gap:8px 12px; }
+      #${DIALOG_ID} .ytm-pm-search-field { border:1px solid var(--ytmx-border,#ffffff28); border-radius:999px; background:rgba(255,255,255,.05); transition:border-color .15s ease, background .15s ease; }
+      #${DIALOG_ID} .ytm-pm-search-field:focus-within { border-color:var(--ytmx-accent-ring,#fff); background:rgba(255,255,255,.08); }
+      #${DIALOG_ID} .ytm-pm-search-field input { min-height:42px; }
+      #${DIALOG_ID} .ytm-pm-search-field input:focus-visible { outline:none; }
+      #${DIALOG_ID} .ytm-pm-search-field kbd { margin-right:12px; padding:1px 7px; border:1px solid var(--ytmx-border-strong,#666); border-radius:5px; font:500 11px var(--ytmx-font,sans-serif); color:var(--ytmx-text-3,#888); }
+      #${DIALOG_ID} .ytm-pm-input, #${DIALOG_ID} select { border-color:var(--ytmx-border,#ffffff28); border-radius:var(--ytmx-radius,8px); background:var(--ytmx-surface-2,#282828); transition:border-color .15s ease; }
+      #${DIALOG_ID} .ytm-pm-input:hover, #${DIALOG_ID} select:hover { border-color:var(--ytmx-border-strong,#ffffff45); }
+      #${DIALOG_ID} .ytm-pm-filters { padding:0 24px 12px; }
+      #${DIALOG_ID} .ytm-pm-chip { border-radius:999px; padding:0 14px; background:rgba(255,255,255,.07); transition:background .15s ease, color .15s ease; }
+      #${DIALOG_ID} .ytm-pm-chip[aria-pressed=true] { background:var(--ytmx-text,#f1f1f1); color:#111; }
+      #${DIALOG_ID} .ytm-pm-chip[aria-pressed=true]:hover { background:#fff !important; }
+      #${DIALOG_ID} .ytm-pm-selection { padding:8px 24px; background:transparent; gap:8px 12px; border-color:var(--ytmx-border,#ffffff15); }
       #${DIALOG_ID} .ytm-pm-selection label:has(input:disabled) { display:none; }
       #${DIALOG_ID} .ytm-pm-selection .ytm-pm-secondary { border-color:transparent; }
-      #${DIALOG_ID} .ytm-pm-workflow { background:#ffffff04; padding:14px 24px; }
+      #${DIALOG_ID} .ytm-pm-selection-count { padding:3px 10px; border-radius:999px; background:rgba(255,255,255,.06); font-variant-numeric:tabular-nums; transition:background .15s ease, color .15s ease; }
+      #${DIALOG_ID} .ytm-pm-selection-count[data-active] { background:var(--ytmx-accent-soft,#ffffff20); color:var(--ytmx-accent,#fff); font-weight:600; }
+      #${DIALOG_ID} input[type=checkbox] { accent-color:var(--ytmx-accent,#fff); cursor:pointer; }
+      #${DIALOG_ID} .ytm-pm-columns { position:sticky; top:0; z-index:1; padding:10px 32px 8px; text-transform:uppercase; letter-spacing:.06em; font-size:10.5px; font-weight:600; color:var(--ytmx-text-3,#888); }
+      #${DIALOG_ID} .ytm-pm-list { padding:4px 24px 8px; }
+      #${DIALOG_ID} .ytm-pm-row { border-radius:var(--ytmx-radius,8px); transition:background .12s ease, box-shadow .12s ease; }
+      #${DIALOG_ID} .ytm-pm-row:hover { background:rgba(255,255,255,.05); }
+      #${DIALOG_ID} .ytm-pm-row:has(input:checked) { background:var(--ytmx-accent-soft,#ffffff16); box-shadow:inset 3px 0 0 var(--ytmx-accent,#fff); }
+      #${DIALOG_ID} .ytm-pm-row:has(input:focus-visible) { box-shadow:0 0 0 2px var(--ytmx-accent-ring,#fff); }
+      #${DIALOG_ID} .ytm-pm-row input:focus-visible { outline:none; }
+      #${DIALOG_ID} .ytm-pm-row-title { font-weight:500; color:var(--ytmx-text,#fff); }
+      #${DIALOG_ID} .ytm-pm-song { display:flex; align-items:center; gap:12px; min-width:0; }
+      #${DIALOG_ID} .ytm-pm-song-text { min-width:0; }
+      #${DIALOG_ID} .ytm-pm-art { display:grid; place-items:center; width:40px; height:40px; flex:none; background:rgba(255,255,255,.05); border-radius:var(--ytmx-radius-sm,4px); overflow:hidden; color:#777; }
+      #${DIALOG_ID} .ytm-pm-art img { width:100%; height:100%; object-fit:cover; animation:ytmx-fade-in .3s ease; }
+      #${DIALOG_ID} .ytm-pm-warning { display:inline-block; padding:2px 8px; border-radius:999px; background:rgba(249,171,0,.12); font-size:11px; font-weight:500; }
+      #${DIALOG_ID} .ytm-pm-badge { padding:2px 8px; border-radius:999px; background:rgba(255,255,255,.08); }
+      #${DIALOG_ID} .ytmx-skeleton-row { display:flex; align-items:center; gap:12px; min-height:60px; padding:6px 8px 6px 70px; }
+      #${DIALOG_ID} .ytm-pm-empty { display:grid; place-items:center; gap:8px; padding:56px 0; color:var(--ytmx-text-3,#888); text-align:center; }
+      #${DIALOG_ID} .ytm-pm-empty svg { width:36px; height:36px; opacity:.6; }
+      #${DIALOG_ID} .ytm-pm-empty strong { color:var(--ytmx-text-2,#ccc); font-size:14px; font-weight:500; }
       #${DIALOG_ID} .ytm-pm-pages { padding:6px 24px; font-size:12px; }
       #${DIALOG_ID} .ytm-pm-pages button { border:0; }
-      #${DIALOG_ID} .ytm-pm-status { background:#ffffff06; border-left:3px solid currentColor; margin:8px 24px; padding:10px 12px; border-radius:4px; }
-      #${DIALOG_ID} .ytm-pm-status:empty { margin:0; }
+      #${DIALOG_ID} .ytm-pm-status { margin:8px 24px; padding:10px 14px; border:1px solid var(--ytmx-border,#ffffff15); border-left:3px solid var(--ytmx-text-3,#888); border-radius:var(--ytmx-radius-sm,4px); background:rgba(255,255,255,.035); color:var(--ytmx-text-2,#aaa); animation:ytmx-fade-in .2s ease; }
+      #${DIALOG_ID} .ytm-pm-status[data-kind=error] { border-left-color:var(--ytmx-danger,#ff8a80); color:#ffb4ab; background:rgba(255,107,107,.07); }
+      #${DIALOG_ID} .ytm-pm-status[data-kind=success] { border-left-color:var(--ytmx-success,#3ddc84); color:#b9f6ca; background:rgba(61,220,132,.07); }
+      #${DIALOG_ID} .ytm-pm-status:empty { margin:0; padding:0; border:0; }
+      #${DIALOG_ID} .ytm-pm-workflow { background:rgba(255,255,255,.025); padding:14px 24px; border-color:var(--ytmx-border,#ffffff20); }
       #${DIALOG_ID} .ytm-pm-destination-filter { width:30%; }
-      #${DIALOG_ID} .ytm-pm-footer { background:#181818; }
+      #${DIALOG_ID} .ytm-pm-footer { background:rgba(0,0,0,.25); border-color:var(--ytmx-border,#ffffff15); }
+      #${DIALOG_ID} .ytm-pm-secondary { transition:background .15s ease, border-color .15s ease; }
+      #${DIALOG_ID} .ytm-pm-primary { background:var(--ytmx-accent,#f1f1f1); color:#fff; font-weight:600; transition:background .15s ease, transform .15s var(--ytmx-ease,ease), box-shadow .15s ease; }
+      #${DIALOG_ID} .ytm-pm-primary:hover:not(:disabled) { background:var(--ytmx-accent-strong,#ddd); transform:translateY(-1px); box-shadow:0 6px 18px rgba(255,59,92,.3); }
+      #${DIALOG_ID} .ytm-pm-primary[data-confirm] { background:#fff; color:#111; }
+      #${DIALOG_ID} :focus-visible { outline-color:var(--ytmx-accent,#f1f1f1); }
+      @media(prefers-reduced-motion:reduce) { #${DIALOG_ID}, #${DIALOG_ID} * { animation:none !important; transition:none !important; } }
     `;
     document.head.appendChild(style);
   }
@@ -439,7 +485,7 @@
       const warning = track.unavailable ? '<span class="ytm-pm-warning">Unavailable</span>' : state.duplicateCandidates.has(index) ? '<span class="ytm-pm-badge">Extra copy</span>' : "";
       const checked = state.selected.has(index) || state.duplicates.has(index) || state.unavailable.has(index);
       return `<label class="ytm-pm-row"><input type="checkbox" data-index="${index}" ${checked ? "checked" : ""} aria-label="Select ${escapeHtml(track.title)}" /><span class="ytm-pm-number" title="Playlist position">${index + 1}</span><span class="ytm-pm-song"><span class="ytm-pm-art">${track.thumbnail ? `<img src="${escapeHtml(track.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : icon("music")}</span><span class="ytm-pm-song-text"><span class="ytm-pm-row-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</span><span class="ytm-pm-row-sub">${escapeHtml(track.artist || "Unknown artist")}</span></span></span><span class="ytm-pm-row-sub ytm-pm-album" title="${escapeHtml(track.album)}">${escapeHtml(track.album || "—")}</span><span class="ytm-pm-duration">${formatDuration(track.durationSeconds)}</span><span class="ytm-pm-row-sub ytm-pm-row-state">${warning}</span></label>`;
-    }).join("") || `<div class="ytm-pm-muted" style="padding:28px 0;text-align:center;">No matching tracks.</div>`;
+    }).join("") || emptyState();
     list.querySelectorAll("input[data-index]").forEach((input) => {
       let range = false;
       input.addEventListener("click", (event) => { range = event.shiftKey; });
@@ -474,6 +520,17 @@
     if (previous) { previous.disabled = state.page === 0; previous.hidden = pageCount === 1; }
     if (next) { next.disabled = state.page >= pageCount - 1; next.hidden = pageCount === 1; }
     syncSelectionControls();
+  }
+
+  function emptyState() {
+    if (state.busy && !state.tracks.length) return window.__ytmUi?.skeletonRows?.(7) || "";
+    const message = !state.tracks.length ? ["This playlist is empty", "Add songs on YouTube Music, then reopen the manager."]
+      : state.query.trim() ? ["No songs match your search", "Try a different title, artist, or album."]
+      : state.filter === "duplicates" ? ["No duplicates found", "Every song appears only once."]
+      : state.filter === "unavailable" ? ["Everything is playable", "No unavailable songs in this playlist."]
+      : state.filter === "selected" ? ["Nothing selected yet", "Tick songs or use the quick-select options above."]
+      : ["No matching songs", ""];
+    return `<div class="ytm-pm-empty">${icon("music")}<strong>${message[0]}</strong><span>${message[1]}</span></div>`;
   }
 
   function syncSelectionControls() {
@@ -562,10 +619,16 @@
         : `Ready to ${action} <strong>${state.operation === "position" ? selectedCount : plannedCount}</strong> ${selectedCount === 1 ? "song" : "songs"}.${existingCount ? ` ${existingCount} of ${selectedCount} already in the destination; skipped.` : ""}${rejectedCount > existingCount ? ` ${rejectedCount - existingCount} skipped: unavailable, repeated selection, or missing entry information.` : ""}${scope}${addressWarning}${snapshotWarning}`;
     }
     const apply = state.dialog.querySelector("[data-action='apply']");
-    if (apply) apply.textContent = state.busy ? "Saving…" : state.plan && state.confirmationPlan === state.plan ? ({ copy: "Confirm copy", move: "Confirm move", remove: "Confirm removal", sort: "Confirm order", position: "Confirm position" }[state.operation]) : "Review changes";
+    const confirming = Boolean(state.plan && state.confirmationPlan === state.plan);
+    if (apply) {
+      if (state.busy) apply.innerHTML = '<span class="ytmx-spinner" aria-hidden="true"></span> Saving…';
+      else apply.textContent = confirming ? ({ copy: "Confirm copy", move: "Confirm move", remove: "Confirm removal", sort: "Confirm order", position: "Confirm position" }[state.operation]) : "Review changes";
+      apply.toggleAttribute?.("data-confirm", confirming && !state.busy);
+    }
     if (apply) apply.disabled = state.busy || state.planning || summary.videoCount === 0 || !state.snapshotFingerprint || !state.plan || ((isSourceEdit()) && summary.unaddressableCount > 0) || (isTransfer() && !state.destination) || state.plan?.acceptedCount === 0;
     const count = state.dialog.querySelector("[data-role='selection-count']");
-    if (count) count.textContent = `${selectionIndices().size.toLocaleString()} selected`;
+    const selectedTotal = selectionIndices().size;
+    if (count) { count.textContent = `${selectedTotal.toLocaleString()} selected`; count.toggleAttribute?.("data-active", selectedTotal > 0); }
     const confirmation = state.dialog.querySelector("[data-role='confirmation']");
     if (confirmation && (!state.plan || state.confirmationPlan !== state.plan)) confirmation.textContent = state.planning ? "Checking this change…" : "Changes are saved only when you confirm.";
     state.dialog.querySelectorAll("input, select, [data-action='select-all'], [data-action='clear']").forEach((control) => { control.disabled = state.busy; });
@@ -641,9 +704,22 @@
     }
   }
 
-  function setStatus(message, error = false) {
+  function setStatus(message, error = false, kind = null) {
     const status = state.dialog?.querySelector("[data-role='status']");
-    if (status) { status.textContent = message; status.style.color = error ? "#ff8a80" : ""; }
+    if (status) { status.textContent = message; status.dataset.kind = kind || (error ? "error" : "info"); }
+  }
+
+  function setProgress(loaded, total, active = true) {
+    const bar = state.dialog?.querySelector("[data-role='progress']");
+    if (!bar) return;
+    const fill = bar.firstElementChild;
+    if (!active) { bar.removeAttribute("data-indeterminate"); if (fill) fill.style.width = "0"; return; }
+    if (total > 0) { bar.removeAttribute("data-indeterminate"); if (fill) fill.style.width = `${Math.min(100, Math.round((loaded / total) * 100))}%`; }
+    else { bar.setAttribute("data-indeterminate", ""); if (fill) fill.style.width = ""; }
+  }
+
+  function notify(message, kind = "info") {
+    window.__ytmUi?.toast?.(message, { kind, key: "playlist-manager" });
   }
 
   async function loadDestinations() {
@@ -705,6 +781,9 @@
     const signal = state.loadController?.signal;
     const generation = state.generation;
     setStatus("Loading playlist tracks…");
+    setProgress(0, 0);
+    const list = state.dialog?.querySelector("[data-role='list']");
+    if (list && !state.tracks.length && window.__ytmUi?.skeletonRows) list.innerHTML = window.__ytmUi.skeletonRows(7);
     renderPreview();
     try {
       const result = await source.readPlaylist(state.playlistId, { signal, onProgress: (progress) => {
@@ -714,6 +793,7 @@
         if (Number.isFinite(loaded)) state.loaded = loaded;
         if (Number.isFinite(total) && total > 0) state.total = total;
         setStatus(state.total ? `Loading playlist tracks… ${state.loaded} of ${state.total}` : `Loading playlist tracks… ${state.loaded}`);
+        setProgress(state.loaded, state.total);
       } });
       if (!state.dialog || state.generation !== generation) return;
       const rawTracks = Array.isArray(result) ? result : result?.items;
@@ -741,7 +821,7 @@
       if (error?.name === "AbortError" || !state.dialog || state.generation !== generation) return;
       setStatus(`Could not load playlist: ${text(error?.message) || "unknown error"}`, true);
     } finally {
-      if (state.generation === generation) { state.busy = false; renderPreview(); }
+      if (state.generation === generation) { state.busy = false; setProgress(0, 0, false); renderPreview(); }
     }
   }
 
@@ -879,7 +959,8 @@
       renderRows();
       if (failedCount || cancelled) await requestPlan(true);
       renderPreview();
-      setStatus(resultMessage, failedCount > 0);
+      setStatus(resultMessage, failedCount > 0, failedCount || cancelled ? "error" : "success");
+      notify(resultMessage, failedCount || cancelled ? "error" : "success");
 
     } catch (error) {
       if (state.generation !== generation) return;
@@ -934,8 +1015,9 @@
     dialog.setAttribute("aria-labelledby", "ytm-pm-heading");
     dialog.innerHTML = `
       <section class="ytm-pm-card">
-        <header class="ytm-pm-header"><div class="ytm-pm-title"><span class="ytm-pm-muted">Manage playlist</span><strong id="ytm-pm-heading"></strong></div><button class="ytm-pm-close" type="button" aria-label="Close playlist manager">${icon("close")}</button></header>
-        <div class="ytm-pm-content"><div class="ytm-pm-toolbar"><label class="ytm-pm-search-field">${icon("search")}<input class="ytm-pm-input ytm-pm-search" data-role="search" type="search" placeholder="Search this entire playlist" aria-label="Search playlist tracks" /></label><label class="ytm-pm-control"><span>Sort view</span><select data-role="sort" aria-label="Sort playlist tracks">${SORT_OPTIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label></div>
+        <header class="ytm-pm-header"><div class="ytm-pm-title"><span class="ytm-pm-muted">Manage playlist</span><strong id="ytm-pm-heading"></strong></div><button class="ytm-pm-close" type="button" aria-label="Close playlist manager" title="Close (Esc)">${icon("close")}</button></header>
+        <div class="ytm-pm-progress" data-role="progress" aria-hidden="true"><span></span></div>
+        <div class="ytm-pm-content"><div class="ytm-pm-toolbar"><label class="ytm-pm-search-field">${icon("search")}<input class="ytm-pm-input ytm-pm-search" data-role="search" type="search" placeholder="Search this entire playlist" aria-label="Search playlist tracks" aria-keyshortcuts="Control+F /" /><kbd aria-hidden="true">/</kbd></label><label class="ytm-pm-control"><span>Sort view</span><select data-role="sort" aria-label="Sort playlist tracks">${SORT_OPTIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label></div>
         <div class="ytm-pm-filters" role="group" aria-label="Show songs">${[["all", "All songs"], ["duplicates", "Duplicates"], ["unavailable", "Unavailable"], ["selected", "Selected"]].map(([value, label]) => `<button type="button" class="ytm-pm-chip" data-filter="${value}" aria-pressed="${value === "all"}">${label}</button>`).join("")}<span class="ytm-pm-muted" data-role="filter-hint">Search by title, artist, or album</span></div>
         <div class="ytm-pm-selection"><button class="ytm-pm-secondary" type="button" data-action="select-all">Select all songs</button><button class="ytm-pm-secondary" type="button" data-action="select-matches" hidden>Select results</button><button class="ytm-pm-secondary" type="button" data-action="clear">Clear selection</button><label title="Select extra copies of the same video; keep the first occurrence"><input type="checkbox" data-role="duplicates" /> <span data-role="duplicate-label">Select extra copies</span></label><label><input type="checkbox" data-role="unavailable" /> <span data-role="unavailable-label">Select unavailable</span></label><span class="ytm-pm-selection-count" data-role="selection-count">0 selected</span></div>
         <div class="ytm-pm-status" data-role="status" role="status" aria-live="polite">Loading playlist…</div>
@@ -953,7 +1035,17 @@
     dialog.querySelector("[data-role='operation']").value = state.operation;
     dialog.querySelector(".ytm-pm-close").addEventListener("click", closeDialog);
     dialog.querySelector("[data-action='cancel']").addEventListener("click", closeDialog);
-    dialog.addEventListener("keydown", (event) => { event.stopPropagation?.(); if (event.key === "Escape") closeDialog(); else trapFocus(event); });
+    dialog.addEventListener("keydown", (event) => {
+      event.stopPropagation?.();
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || "") && event.target?.type !== "checkbox";
+      const search = dialog.querySelector("[data-role='search']");
+      if (event.key === "Escape" && typing && event.target === search && search.value) {
+        search.value = ""; state.query = ""; state.page = 0; renderRows(); renderPreview();
+      } else if (event.key === "Escape") closeDialog();
+      else if (((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === "f") || (event.key === "/" && !typing)) {
+        event.preventDefault(); search?.focus(); search?.select?.();
+      } else trapFocus(event);
+    });
     dialog.addEventListener("click", (event) => { if (event.target === dialog) closeDialog(); });
     dialog.querySelector("[data-role='search']").addEventListener("input", (event) => { state.query = event.target.value; state.page = 0; state.anchorIndex = null; renderRows(); renderPreview(); });
     dialog.querySelector("[data-role='sort']").addEventListener("change", (event) => { state.sort = event.target.value; state.page = 0; state.anchorIndex = null; state.plan = null; renderRows(); renderPreview(); requestPlan(); });
@@ -1004,7 +1096,16 @@
 
   addStyles();
   ensureButton();
-  const observer = new MutationObserver(ensureButton);
+  // coalesce mutation bursts
+  let ensureScheduled = false;
+  const observer = new MutationObserver(() => {
+    if (ensureScheduled) return;
+    ensureScheduled = true;
+    setTimeout(() => {
+      ensureScheduled = false;
+      ensureButton();
+    }, 200);
+  });
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   setInterval(ensureButton, 1200);
   publicApi.openDialog = openDialog;
