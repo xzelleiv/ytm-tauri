@@ -63,6 +63,21 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
             };
             send_response(window, request.id, &response);
         }
+        "get_app_status" => {
+            let status = serde_json::json!({
+                "discord": state.presence.status(),
+                "ads_blocked": state.adblock.blocked_requests(),
+            });
+            let response = FeatureResponse {
+                ok: true,
+                status: Some(200),
+                body: Some(status.to_string()),
+                headers: HashMap::new(),
+                settings: None,
+                error: None,
+            };
+            send_response(window, request.id, &response);
+        }
         "get_settings" => {
             let current = sanitize_settings(settings::snapshot(&state.settings));
             let response = FeatureResponse {
@@ -513,7 +528,7 @@ fn parse_request(title: &str) -> Option<FeatureRequest> {
     let request: FeatureRequest = serde_json::from_str(raw).ok()?;
 
     match request.kind.as_str() {
-        "get_settings" | "get_update_status" => Some(request),
+        "get_settings" | "get_update_status" | "get_app_status" => Some(request),
         "set_setting" => {
             if request.key.is_some() && request.value.is_some() {
                 Some(request)
@@ -738,6 +753,9 @@ mod tests {
         let request = r#"YTMFEATURE:{"id":4,"kind":"get_update_status"}"#;
         let parsed = parse_request(request).expect("update status");
         assert_eq!(parsed.kind, "get_update_status");
+
+        let request = r#"YTMFEATURE:{"id":5,"kind":"get_app_status"}"#;
+        assert!(parse_request(request).is_some());
     }
 
     #[test]

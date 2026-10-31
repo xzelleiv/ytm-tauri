@@ -65,6 +65,13 @@
         flushQueue();
       });
     },
+    getAppStatus() {
+      const id = ++requestId;
+      return new Promise((resolve, reject) => {
+        queue.push({ id, message: { id, kind: "get_app_status" }, resolve, reject });
+        flushQueue();
+      });
+    },
     getSettings() {
       const id = ++requestId;
       const message = { id, kind: "get_settings" };

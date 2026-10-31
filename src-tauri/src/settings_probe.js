@@ -286,6 +286,24 @@
       font-weight: 400;
       color: rgba(255, 255, 255, 0.5);
     }
+    .ytm-status-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+    .ytm-status-line::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #f9ab00;
+    }
+    .ytm-status-line[data-state=ok]::before { background: #3ddc84; }
+    .ytm-status-line[data-state=off]::before { background: rgba(255, 255, 255, 0.35); }
+    .ytm-status-line[data-state=error]::before { background: #ff6b6b; }
     .ytm-modal-search {
       flex: 1;
       max-width: 320px;
@@ -902,6 +920,23 @@
     return { rack, updateRackFromGains };
   }
 
+  function refreshAppStatus(target) {
+    const request = window.__ytmFeatures?.getAppStatus?.();
+    if (!request?.then) {
+      target.remove();
+      return;
+    }
+    request.then((response) => {
+      const status = JSON.parse(response?.body || "{}");
+      const text = String(status.discord || "");
+      target.textContent = text || "Status unavailable";
+      target.dataset.state = /^Connected/.test(text) ? "ok" : /^Disabled/.test(text) ? "off" : /^Unavailable/.test(text) ? "error" : "pending";
+    }).catch(() => {
+      target.textContent = "Status unavailable";
+      target.dataset.state = "error";
+    });
+  }
+
   function renderGeneral(container) {
     setHTML(container, `
       <h2 style="font-size:20px;margin:0 0 4px 0;color:#fff;">General Settings</h2>
@@ -909,7 +944,14 @@
     `);
     const group = document.createElement("div");
     group.className = "ytm-card-group";
-    group.appendChild(createToggle("discord_rpc", "Discord Rich Presence", "Display current playing track, artist, album, and artwork on Discord profile.", true));
+    const discordCard = createToggle("discord_rpc", "Discord Rich Presence", "Display current playing track, artist, album, and artwork on Discord profile.", true);
+    const discordStatus = document.createElement("div");
+    discordStatus.className = "ytm-status-line";
+    discordStatus.dataset.state = "pending";
+    discordStatus.textContent = "Checking Discord connection…";
+    discordCard.querySelector(".ytm-card-details")?.appendChild(discordStatus);
+    group.appendChild(discordCard);
+    refreshAppStatus(discordStatus);
     group.appendChild(createToggle("close_to_tray", "Close to Tray", "Minimize YouTube Music to system notification tray instead of exiting.", false));
     group.appendChild(createToggle("launch_at_startup", "Launch at Startup", "Automatically start YouTube Music when logging into Windows.", false));
     group.appendChild(createToggle("start_minimized", "Start Minimized", "Launch app directly in background/tray without showing main window.", false));
