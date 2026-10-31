@@ -1,6 +1,6 @@
 use crate::{presence::TrackMetadata, settings, settings::SharedSettings};
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 pub trait NotificationSink: Send + Sync {
@@ -42,11 +42,25 @@ impl NotificationController {
     }
 
     pub fn update(&self, app: &AppHandle, track: &TrackMetadata) {
+        let focused = app
+            .get_webview_window("main")
+            .and_then(|window| window.is_focused().ok())
+            .unwrap_or(false);
         let sink = TauriNotificationSink::new(app.clone());
-        self.update_with_sink(&sink, track);
+        self.update_with_focus(&sink, track, focused);
     }
 
     pub fn update_with_sink(&self, sink: &dyn NotificationSink, track: &TrackMetadata) {
+        self.update_with_focus(sink, track, false);
+    }
+
+    // skip while focused
+    pub fn update_with_focus(
+        &self,
+        sink: &dyn NotificationSink,
+        track: &TrackMetadata,
+        window_focused: bool,
+    ) {
         if !settings::snapshot(&self.settings).notifications || !track.playing {
             return;
         }
@@ -56,6 +70,10 @@ impl NotificationController {
             return;
         };
         if last_track.as_deref() == Some(&key) {
+            return;
+        }
+        if window_focused {
+            *last_track = Some(key);
             return;
         }
 
@@ -200,5 +218,32 @@ mod tests {
         };
         controller.update_with_sink(&working_sink, &t);
         assert_eq!(delivered.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn focused_window_suppresses_notification_for_that_track() {
+        let delivered = Arc::new(Mutex::new(Vec::new()));
+        let sink = MockNotificationSink {
+            should_fail: false,
+            delivered: delivered.clone(),
+        };
+        let controller = NotificationController::new(Arc::new(Mutex::new(settings::Settings {
+            notifications: true,
+            ..Default::default()
+        })));
+        let track = TrackMetadata {
+            title: "Song".to_string(),
+            artist: Some("Artist".to_string()),
+            album: None,
+            playing: true,
+            url: None,
+            cover_url: None,
+            elapsed_seconds: None,
+            duration_seconds: None,
+        };
+
+        controller.update_with_focus(&sink, &track, true);
+        controller.update_with_focus(&sink, &track, false);
+        assert!(delivered.lock().unwrap().is_empty());
     }
 }
