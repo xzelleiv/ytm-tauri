@@ -365,6 +365,11 @@
     document.addEventListener("yt-navigate-finish", schedulePublish, true);
     document.addEventListener("play", schedulePublish, true);
     document.addEventListener("pause", schedulePublish, true);
+    document.addEventListener("seeked", () => {
+      lastProgressPublish = 0;
+      lastPayload = "";
+      schedulePublish();
+    }, true);
 
     window.setInterval(publish, 2500);
     schedulePublish();
