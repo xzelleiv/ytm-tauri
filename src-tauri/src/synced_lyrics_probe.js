@@ -713,28 +713,6 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     return str.trim();
   }
 
-  function cleanSongTitle(title) {
-    if (!title) return "";
-    let str = String(title)
-      .replace(/^\d+[\s.-]+\s*/, "")
-      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
-      .replace(/\s*-\s*(official|audio|video|lyrics?|visualizer|remaster(ed)?|demo|live|extended|draft|special edition|deluxe).*$/gi, " ")
-      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return cleanupName(str);
-  }
-
-  function cleanArtist(artist) {
-    if (!artist) return "";
-    let str = String(artist)
-      .replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, " ")
-      .replace(/\s+(feat|ft)\.?\s+.*$/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return cleanupName(str);
-  }
-
   const KANA_MAP = {
     "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
     "か": "ka", "き": "ki", "く": "ku", "け": "ke", "こ": "ko",
@@ -1177,33 +1155,6 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     render();
   }
 
-  let lrclibBlockedUntil = 0;
-  const sleep = (ms, signal = null) => new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    let timer = setTimeout(done, ms);
-    function done() {
-      if (timer) clearTimeout(timer);
-      signal?.removeEventListener?.("abort", done);
-      resolve();
-    }
-    signal?.addEventListener?.("abort", done, { once: true });
-  });
-
-  function parseRetryAfter(header) {
-    if (!header) return 60;
-    const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds, 86400);
-    const parsedDate = Date.parse(header);
-    if (Number.isFinite(parsedDate)) {
-      const diff = Math.ceil((parsedDate - Date.now()) / 1000);
-      return diff > 0 ? Math.min(diff, 86400) : 60;
-    }
-    return 60;
-  }
-
   function providerSearch(name, info, epoch = currentTrackEpoch, signal = null) {
     switch (name) {
       case "YTMusic": return fetchYtmLyrics(info, epoch, signal);
@@ -1212,213 +1163,29 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     }
   }
 
-  async function directFetchJson(url, signal = null) {
-    if (signal?.aborted) {
-      return null;
-    }
-    if (Date.now() < lrclibBlockedUntil) {
-      return null;
-    }
-    const headers = { "Lrclib-Client": "ytm-tauri/0.2.5 (https://github.com/xzelleiv/ytm-tauri)" };
-    try {
-      const res = await window.fetch(url, { headers, signal });
-      if (res.status === 429) {
-        const retryAfter = parseRetryAfter(res.headers?.get?.("retry-after"));
-        lrclibBlockedUntil = Date.now() + retryAfter * 1000;
-        return null;
-      }
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch {
-      // network fallback
-    }
-    if (signal?.aborted) {
-      return null;
-    }
-    if (Date.now() < lrclibBlockedUntil) {
-      return null;
-    }
-    const bridged = await requestJson(url, { headers, signal });
-    if (bridged?.__status === 429) {
-      const retryAfter = parseRetryAfter(bridged.__retryAfter);
-      lrclibBlockedUntil = Date.now() + retryAfter * 1000;
-      return null;
-    }
-    return bridged;
-  }
-
-  function dice(first, second) {
-    if (!first || !second) return 0;
-    if (first === second) return 1;
-    if (first.length < 2 || second.length < 2) return 0;
-    const firstBigrams = new Map();
-    for (let i = 0; i < first.length - 1; i++) {
-      const bigram = first.substring(i, i + 2);
-      firstBigrams.set(bigram, (firstBigrams.get(bigram) || 0) + 1);
-    }
-    let intersectionSize = 0;
-    for (let i = 0; i < second.length - 1; i++) {
-      const bigram = second.substring(i, i + 2);
-      const count = firstBigrams.get(bigram) || 0;
-      if (count > 0) {
-        firstBigrams.set(bigram, count - 1);
-        intersectionSize++;
-      }
-    }
-    return (2.0 * intersectionSize) / (first.length + second.length - 2);
-  }
-
-  function scoreCandidate(itemArtist, itemTitle, itemDuration, info) {
-    if (!itemArtist || !itemTitle) return -1;
-    const cleanTargetTitle = cleanSongTitle(info.title).toLowerCase();
-    const rawTargetTitle = String(info.title || "").toLowerCase();
-    const cleanTargetArtist = cleanArtist(info.artist).toLowerCase();
-    const rawTargetArtist = String(info.artist || "").toLowerCase();
-
-    const candTitle = cleanSongTitle(itemTitle).toLowerCase();
-    const candArtist = cleanArtist(itemArtist).toLowerCase();
-
-    const titleSim = Math.max(
-      dice(cleanTargetTitle, candTitle),
-      dice(rawTargetTitle, candTitle),
-      dice(cleanTargetTitle, itemTitle.toLowerCase()),
-      jaroWinkler(cleanTargetTitle, candTitle),
-      jaroWinkler(rawTargetTitle, candTitle)
-    );
-    const artistSim = Math.max(
-      dice(cleanTargetArtist, candArtist),
-      dice(rawTargetArtist, candArtist),
-      dice(cleanTargetArtist, itemArtist.toLowerCase()),
-      jaroWinkler(cleanTargetArtist, candArtist),
-      jaroWinkler(rawTargetArtist, candArtist)
-    );
-
-    if (titleSim < 0.65 || artistSim < 0.55) return -1;
-
-    let score = titleSim * 0.6 + artistSim * 0.4;
-    if (info.songDuration > 0 && itemDuration > 0) {
-      const diff = Math.abs(itemDuration - info.songDuration);
-      // reject mismatched recording durations
-      if (diff > 2.5) return -1;
-      if (diff < 5) score += 0.1;
-    }
-    return score;
-  }
-
+  // native lyrics lookup
   async function fetchLrcLib(info, epoch = currentTrackEpoch, signal = null) {
-    if (epoch !== currentTrackEpoch || signal?.aborted || Date.now() < lrclibBlockedUntil) {
+    if (epoch !== currentTrackEpoch || signal?.aborted || typeof runtime.lyrics !== "function") {
       return null;
     }
-    const cleanTitle = cleanSongTitle(info.title);
-    const cleanArt = cleanArtist(info.artist);
+    return nativeLyrics({
+      title: String(info.title || ""),
+      artist: String(info.artist || ""),
+      album: info.album ? String(info.album) : null,
+      duration: Number(info.songDuration) > 0 ? Number(info.songDuration) : 0,
+    }, epoch, signal);
+  }
 
-    // exact signature lookup
-    if (cleanTitle && cleanArt) {
-      const getParams = new URLSearchParams({
-        track_name: cleanTitle,
-        artist_name: cleanArt,
-      });
-      if (info.album) getParams.set("album_name", info.album);
-      if (info.songDuration > 0) getParams.set("duration", String(Math.round(info.songDuration)));
-
-      const getUrl = `https://lrclib.net/api/get?${getParams.toString()}`;
-      const exact = await directFetchJson(getUrl, signal);
-      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
-      if (exact && typeof exact === "object" && !Array.isArray(exact)) {
-        if (!exact.instrumental && (exact.syncedLyrics || exact.plainLyrics)) {
-          const score = scoreCandidate(exact.artistName, exact.trackName, exact.duration || 0, info);
-          if (score > 0) {
-            const lines = exact.syncedLyrics ? parseLrc(exact.syncedLyrics).lines : null;
-            return {
-              title: exact.trackName || info.title,
-              artists: [exact.artistName || info.artist],
-              lines,
-              lyrics: exact.plainLyrics || null,
-            };
-          }
-        }
-      }
+  async function nativeLyrics(query, epoch, signal) {
+    if (typeof runtime.lyrics !== "function") return null;
+    const response = await runtime.lyrics(query);
+    if (epoch !== currentTrackEpoch || signal?.aborted || !response?.body) return null;
+    try {
+      const data = JSON.parse(response.body);
+      return data && (data.lines?.length || data.lyrics) ? data : null;
+    } catch {
+      return null;
     }
-
-    let data = [];
-
-    // structured clean query
-    if (cleanTitle) {
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      await sleep(250, signal);
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      const query = new URLSearchParams({
-        artist_name: cleanArt || info.artist,
-        track_name: cleanTitle,
-      });
-      if (info.album) {
-        query.set("album_name", info.album);
-      }
-      const url = `https://lrclib.net/api/search?${query.toString()}`;
-      const res = await directFetchJson(url, signal);
-      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
-      if (Array.isArray(res) && res.length > 0) {
-        data = res;
-      }
-    }
-
-    // structured raw query
-    if (!data.length && info.title) {
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      await sleep(250, signal);
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      const query = new URLSearchParams({
-        artist_name: info.artist,
-        track_name: info.title,
-      });
-      const url = `https://lrclib.net/api/search?${query.toString()}`;
-      const res = await directFetchJson(url, signal);
-      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
-      if (Array.isArray(res) && res.length > 0) {
-        data = res;
-      }
-    }
-
-    // fallback query
-    if (!data.length) {
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      await sleep(250, signal);
-      if (Date.now() < lrclibBlockedUntil || epoch !== currentTrackEpoch || signal?.aborted) return null;
-      const q = `${cleanArt || info.artist} ${cleanTitle || info.title}`.trim();
-      const query = new URLSearchParams({ q });
-      const url = `https://lrclib.net/api/search?${query.toString()}`;
-      const res = await directFetchJson(url, signal);
-      if (epoch !== currentTrackEpoch || signal?.aborted) return null;
-      if (Array.isArray(res) && res.length > 0) {
-        data = res;
-      }
-    }
-
-    if (!data.length || epoch !== currentTrackEpoch || signal?.aborted) return null;
-
-    const scored = data
-      .filter((item) => !item.instrumental && (item.syncedLyrics || item.plainLyrics))
-      .map((item) => ({
-        item,
-        score: scoreCandidate(item.artistName, item.trackName, item.duration || 0, info),
-      }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score);
-
-    if (!scored.length) return null;
-    const closestResult = scored[0].item;
-
-    const raw = closestResult.syncedLyrics;
-    const plain = closestResult.plainLyrics;
-    if (!raw && !plain) return null;
-
-    return {
-      title: closestResult.trackName || info.title,
-      artists: closestResult.artistName ? closestResult.artistName.split(/[&,]/g) : [info.artist],
-      lines: raw ? parseLrc(raw).lines : null,
-      lyrics: plain || null,
-    };
   }
 
   async function fetchYtmLyrics(info, epoch = currentTrackEpoch, signal = null) {
@@ -1433,140 +1200,11 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     const tab = tabs.find((item) => item?.tabRenderer?.endpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType === "MUSIC_PAGE_TYPE_TRACK_LYRICS");
     const browseId = tab?.tabRenderer?.endpoint?.browseEndpoint?.browseId;
     if (!browseId) return null;
-    const response = await runtime.request("https://ytmbrowseproxy.zvz.be/browse?prettyPrint=false", {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ browseId, context: { client: { clientName: "26", clientVersion: "7.01.05" } } }),
-      signal,
-    });
-    if (epoch !== currentTrackEpoch || signal?.aborted) return null;
-    if (!response?.ok || !response.body) return null;
-    const browse = JSON.parse(response.body);
-    const contents = browse?.contents;
-    const timed = contents?.elementRenderer?.newElement?.type?.componentType?.model?.timedLyricsModel?.lyricsData?.timedLyricsData;
-    let lines = Array.isArray(timed) && timed[0]?.cueRange
-      ? timed.map((item) => {
-          const start = Number.parseInt(item?.cueRange?.startTimeMilliseconds, 10);
-          const end = Number.parseInt(item?.cueRange?.endTimeMilliseconds, 10);
-          if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-          return { time: formatTime(start), timeInMs: start, duration: end - start, text: clean(item.lyricLine) === "♪" ? "" : clean(item.lyricLine), words: [] };
-        }).filter(Boolean)
-      : null;
-    if (lines?.length && lines[0].timeInMs > 300) lines.unshift({ time: "00:00.00", timeInMs: 0, duration: lines[0].timeInMs, text: "", words: [] });
-    let lyrics = null;
-    if (!lines) {
-      lyrics = Array.isArray(timed)
-        ? timed.map((item) => item.lyricLine).join("\n")
-        : contents?.messageRenderer?.text?.runs?.map((item) => item.text).join("\n")
-          || contents?.sectionListRenderer?.contents?.[0]?.musicDescriptionShelfRenderer?.description?.runs?.map((item) => item.text).join("\n")
-          || null;
-    }
-    if (lyrics === "Lyrics not available") return null;
-    return { title: info.title, artists: [info.artist], lines, lyrics };
-  }
-
-  async function requestJson(url, init) {
-    const response = await runtime.request(url, init);
-    if (response?.status === 429) {
-      const retryHeader = response.headers?.["retry-after"] || response.headers?.["Retry-After"];
-      return { __status: 429, __retryAfter: retryHeader };
-    }
-    if (!response?.ok || !response.body) return null;
-    try {
-      return JSON.parse(response.body);
-    } catch {
-      return null;
-    }
-  }
-
-  function parseLrc(text) {
-    const lines = [];
-    const tags = [];
-    let offset = 0;
-    const timestampRegex = /^\[(?<minutes>\d+):(?<seconds>\d+)(?:[.,:](?<subseconds>\d+))?\]/m;
-    const tagRegex = /^\[(?<tag>\w+):\s*(?<value>.+?)\s*\]$/;
-    const wordRegex = /<(?<minutes>\d+):(?<seconds>\d+)(?:[.,:](?<subseconds>\d+))?>\s*(?<word>\S+)/g;
-
-    for (let raw of String(text || "").split("\n")) {
-      raw = raw.trim();
-      if (!raw.startsWith("[")) continue;
-      const timestamps = [];
-      let match;
-      while ((match = raw.match(timestampRegex)?.groups)) {
-        const { minutes, seconds, subseconds } = match;
-        const fractionMs = subseconds
-          ? parseInt(subseconds.slice(0, 3).padEnd(3, "0"), 10)
-          : 0;
-        const timeInMs =
-          parseInt(minutes, 10) * 60 * 1000 +
-          parseInt(seconds, 10) * 1000 +
-          fractionMs;
-        timestamps.push({
-          time: `${minutes}:${seconds}.${subseconds || "00"}`,
-          timeInMs,
-        });
-        raw = raw.replace(timestampRegex, "");
-      }
-
-      if (!timestamps.length) {
-        const tag = raw.match(tagRegex)?.groups;
-        if (tag) {
-          if (tag.tag === "offset") offset = parseInt(tag.value, 10) || 0;
-          else tags.push({ tag: tag.tag, value: tag.value });
-        }
-        continue;
-      }
-
-      let lineText = raw.trim();
-      const words = Array.from(lineText.matchAll(wordRegex), ({ groups }) => {
-        const { minutes, seconds, subseconds, word } = groups;
-        const fractionMs = subseconds
-          ? parseInt(subseconds.slice(0, 3).padEnd(3, "0"), 10)
-          : 0;
-        const timeInMs =
-          parseInt(minutes, 10) * 60 * 1000 +
-          parseInt(seconds, 10) * 1000 +
-          fractionMs;
-        return { timeInMs, word };
-      });
-
-      if (words.length) {
-        lineText = words.map(({ word }) => word).join(" ");
-      }
-
-      lineText = lineText.replace(/^\[(verse|chorus|bridge|intro|outro|hook|interlude)[^\]]*\]\s*/i, "");
-
-      for (const { time, timeInMs } of timestamps) {
-        lines.push({
-          time,
-          timeInMs,
-          text: lineText,
-          words,
-          duration: Infinity,
-        });
-      }
-    }
-
-    lines.sort((a, b) => a.timeInMs - b.timeInMs);
-    for (let i = 0; i < lines.length; i++) {
-      lines[i].timeInMs += offset;
-      if (lines[i + 1]) {
-        lines[i].duration = Math.max(0, lines[i + 1].timeInMs - lines[i].timeInMs);
-      }
-      if (!Number.isFinite(lines[i].duration)) lines[i].duration = 3000;
-    }
-
-    if (lines[0]?.timeInMs > 300) {
-      lines.unshift({
-        time: "00:00.00",
-        timeInMs: 0,
-        duration: lines[0].timeInMs,
-        text: "",
-        words: [],
-      });
-    }
-
-    return { tags, lines };
+    return nativeLyrics({
+      title: String(info.title || ""),
+      artist: String(info.artist || ""),
+      browse_id: String(browseId),
+    }, epoch, signal);
   }
 
   function formatTime(ms) {
@@ -1574,34 +1212,6 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     const seconds = Math.floor((ms % 60_000) / 1_000);
     const centiseconds = Math.floor((ms % 1_000) / 10);
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(centiseconds).padStart(2, "0")}`;
-  }
-
-  function jaroWinkler(left, right) {
-    if (left === right) return 1;
-    if (!left.length || !right.length) return 0;
-    const range = Math.max(Math.floor(Math.max(left.length, right.length) / 2) - 1, 0);
-    const leftMatches = Array(left.length).fill(false);
-    const rightMatches = Array(right.length).fill(false);
-    let matches = 0;
-    for (let i = 0; i < left.length; i++) {
-      const start = Math.max(0, i - range);
-      const end = Math.min(i + range + 1, right.length);
-      for (let j = start; j < end; j++) {
-        if (rightMatches[j] || left[i] !== right[j]) continue;
-        leftMatches[i] = true;
-        rightMatches[j] = true;
-        matches++;
-        break;
-      }
-    }
-    if (!matches) return 0;
-    const leftChars = left.split("").filter((_, index) => leftMatches[index]);
-    const rightChars = right.split("").filter((_, index) => rightMatches[index]);
-    const transpositions = leftChars.reduce((count, char, index) => count + (char !== rightChars[index] ? 1 : 0), 0) / 2;
-    const jaro = (matches / left.length + matches / right.length + (matches - transpositions) / matches) / 3;
-    let prefix = 0;
-    while (prefix < 4 && prefix < left.length && prefix < right.length && left[prefix] === right[prefix]) prefix++;
-    return jaro + prefix * 0.1 * (1 - jaro);
   }
 
   function ensureContainer() {
@@ -2313,5 +1923,5 @@ html[data-lyrics-effect="cinematic"] .synced-lyrics-vlist.is-scrolled {
     render();
   }
 
-  runtime.register("synced_lyrics", { start, stop, update, applyEffect, fetchLrcLib, parseRetryAfter, parseLrc, renderPlain, scoreCandidate });
+  runtime.register("synced_lyrics", { start, stop, update, applyEffect, fetchLrcLib, renderPlain });
 })();

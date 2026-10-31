@@ -23,9 +23,11 @@
     const item = queue.shift();
     item.timeout = setTimeout(() => {
       requests.delete(item.id);
-      releaseTitle(item);
-      sending = false;
-      flushQueue();
+      if (!item.acked) {
+        releaseTitle(item);
+        sending = false;
+        flushQueue();
+      }
       item.reject(new Error("feature request timed out"));
     }, 15_000);
     requests.set(item.id, item);
@@ -126,14 +128,39 @@
         flushQueue();
       });
     },
+    lyrics(track) {
+      const id = ++requestId;
+      const message = { id, kind: "lyrics", value: track && typeof track === "object" ? track : {} };
+      return new Promise((resolve, reject) => {
+        queue.push({ id, message, resolve, reject });
+        flushQueue();
+      });
+    },
+    // frees title channel
+    ack(id) {
+      const pending = requests.get(id);
+      if (!pending || pending.acked) return;
+      pending.acked = true;
+      clearTimeout(pending.timeout);
+      pending.timeout = setTimeout(() => {
+        requests.delete(id);
+        pending.reject(new Error("feature request timed out"));
+      }, 60_000);
+      releaseTitle(pending);
+      sending = false;
+      if (queue.length) {
+        setTimeout(flushQueue, 10);
+      }
+    },
     receive(id, response) {
       const pending = requests.get(id);
       if (!pending) return;
       clearTimeout(pending.timeout);
       requests.delete(id);
-      releaseTitle(pending);
       if (response?.error) pending.reject(new Error(response.error));
       else pending.resolve(response);
+      if (pending.acked) return;
+      releaseTitle(pending);
       sending = false;
       if (queue.length) {
         setTimeout(flushQueue, 10);
@@ -174,20 +201,23 @@
     for (const name of features.keys()) apply(name);
   }, { once: true });
 
+  const isEditable = (target) => {
+    const tag = target?.tagName?.toUpperCase?.();
+    return tag === "INPUT" || tag === "TEXTAREA" || Boolean(target?.isContentEditable);
+  };
+  const blockContextMenu = (e) => {
+    if (isEditable(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    return false;
+  };
+
   // block context menu
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-    window.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
+    window.addEventListener("contextmenu", blockContextMenu, true);
   }
   if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
-    document.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
+    document.addEventListener("contextmenu", blockContextMenu, true);
     document.addEventListener("selectstart", (e) => {
       const tag = e.target?.tagName?.toUpperCase();
       if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
@@ -224,6 +254,13 @@
     injectGuard();
   }
 
+  function isRendered(element) {
+    if (typeof element.getClientRects === "function") {
+      return element.getClientRects().length > 0;
+    }
+    return element.offsetParent !== null;
+  }
+
   // unblock clicks
   function clearOrphanedInert() {
     if (typeof document?.querySelector !== "function") {
@@ -236,7 +273,7 @@
     const dialog = document.querySelector(
       "tp-yt-paper-dialog:not([style*='display: none']), ytmusic-dialog:not([style*='display: none']), #ytm-settings-modal.open, #ytm-restart-dialog"
     );
-    if (dialog && dialog.offsetParent !== null) {
+    if (dialog && isRendered(dialog)) {
       return;
     }
     layout.removeAttribute("inert");
@@ -253,6 +290,12 @@
 
   if (typeof window?.addEventListener === "function") {
     window.addEventListener("pointerdown", clearOrphanedInert, true);
+    window.addEventListener("focus", clearOrphanedInert);
+  }
+  if (typeof document?.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") clearOrphanedInert();
+    });
   }
   if (typeof setInterval === "function") {
     setInterval(clearOrphanedInert, 2000);

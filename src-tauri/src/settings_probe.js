@@ -10,10 +10,31 @@
   const HEADER_BTN_ID = "ytm-header-settings-btn";
   const ONBOARDING_KEY = "ytm_settings_onboarded_v5";
 
-  let isOpen = false;
-  let activeTab = "general";
+  const TAB_KEY = "ytm_settings_tab";
+  const TABS = ["general", "lyrics", "audio", "tweaks", "scrobble", "system"];
+  const APP_VERSION = String(window.__ytmFeatureConfig?.app_version || "");
 
-  let updateStatus = { revision: -1, stage: "idle", version: "0.2.5", message: "Check for a newer version of YouTube Music.", downloaded: 0, total: null };
+  let isOpen = false;
+  let activeTab = readStoredTab();
+  let searchQuery = "";
+  let onboardedCache = false;
+
+  function readStoredTab() {
+    try {
+      const stored = localStorage.getItem(TAB_KEY);
+      return TABS.includes(stored) ? stored : "general";
+    } catch {
+      return "general";
+    }
+  }
+
+  function storeTab(tab) {
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {}
+  }
+
+  let updateStatus = { revision: -1, stage: "idle", version: APP_VERSION, message: "Check for a newer version of YouTube Music.", downloaded: 0, total: null };
 
   function renderUpdateStatus() {
     const card = document.getElementById("ytm-update-card");
@@ -264,6 +285,78 @@
       font-size: 12px;
       font-weight: 400;
       color: rgba(255, 255, 255, 0.5);
+    }
+    .ytm-modal-search {
+      flex: 1;
+      max-width: 320px;
+      margin: 0 16px 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 17px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .ytm-modal-search:focus-within {
+      border-color: rgba(255, 59, 92, 0.6);
+      background: rgba(255, 255, 255, 0.09);
+    }
+    .ytm-modal-search svg {
+      width: 16px;
+      height: 16px;
+      fill: rgba(255, 255, 255, 0.5);
+      flex-shrink: 0;
+    }
+    .ytm-modal-search input {
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+      border: 0;
+      outline: none;
+      color: #fff;
+      font: inherit;
+      font-size: 13px;
+    }
+    .ytm-modal-search input::placeholder {
+      color: rgba(255, 255, 255, 0.45);
+    }
+    .ytm-search-section + .ytm-search-section {
+      margin-top: 28px;
+    }
+    .ytm-search-section h2 {
+      margin-bottom: 12px !important;
+    }
+    .ytm-settings-card[hidden] {
+      display: none !important;
+    }
+    .ytm-search-empty {
+      padding: 48px 0;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 14px;
+    }
+    .ytm-tab-button:focus-visible,
+    .ytm-modal-close:focus-visible,
+    .ytm-action-btn:focus-visible {
+      outline: 2px solid #ff3b5c;
+      outline-offset: 2px;
+    }
+    @media (max-width: 760px) {
+      .ytm-modal-tabs {
+        width: 64px;
+      }
+      .ytm-tab-button {
+        font-size: 0;
+        justify-content: center;
+        padding: 10px;
+      }
+      .ytm-modal-heading span,
+      .ytm-modal-search {
+        display: none;
+      }
     }
     .ytm-modal-close {
       background: rgba(255, 255, 255, 0.06);
@@ -1073,35 +1166,39 @@
         <div class="ytm-modal-topbar">
           <div class="ytm-modal-heading">
             YouTube Music Settings
-            <span>v0.2.5 by xzelleiv</span>
+            <span>${APP_VERSION ? `v${APP_VERSION} ` : ""}by xzelleiv</span>
           </div>
+          <label class="ytm-modal-search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input type="search" id="ytm-settings-search" placeholder="Search settings" aria-label="Search settings" autocomplete="off" spellcheck="false">
+          </label>
           <button class="ytm-modal-close" id="ytm-modal-close-btn" title="Close Settings">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
           </button>
         </div>
         <div class="ytm-modal-body">
-          <div class="ytm-modal-tabs">
-            <button class="ytm-tab-button ${activeTab === "general" ? "active" : ""}" data-tab="general">
+          <div class="ytm-modal-tabs" role="tablist" aria-orientation="vertical">
+            <button role="tab" class="ytm-tab-button ${activeTab === "general" ? "active" : ""}" data-tab="general">
               <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
               General
             </button>
-            <button class="ytm-tab-button ${activeTab === "lyrics" ? "active" : ""}" data-tab="lyrics">
+            <button role="tab" class="ytm-tab-button ${activeTab === "lyrics" ? "active" : ""}" data-tab="lyrics">
               <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
               Synced Lyrics
             </button>
-            <button class="ytm-tab-button ${activeTab === "audio" ? "active" : ""}" data-tab="audio">
+            <button role="tab" class="ytm-tab-button ${activeTab === "audio" ? "active" : ""}" data-tab="audio">
               <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
               Audio & Equalizer
             </button>
-            <button class="ytm-tab-button ${activeTab === "tweaks" ? "active" : ""}" data-tab="tweaks">
+            <button role="tab" class="ytm-tab-button ${activeTab === "tweaks" ? "active" : ""}" data-tab="tweaks">
               <svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
               Tweaks & Visuals
             </button>
-            <button class="ytm-tab-button ${activeTab === "scrobble" ? "active" : ""}" data-tab="scrobble">
+            <button role="tab" class="ytm-tab-button ${activeTab === "scrobble" ? "active" : ""}" data-tab="scrobble">
               <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
               Scrobbling
             </button>
-            <button class="ytm-tab-button ${activeTab === "system" ? "active" : ""}" data-tab="system">
+            <button role="tab" class="ytm-tab-button ${activeTab === "system" ? "active" : ""}" data-tab="system">
               <svg viewBox="0 0 24 24"><path d="M11 17h2v-6h-2v6zm1-15C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM11 9h2V7h-2v2z"/></svg>
               System
             </button>
@@ -1117,38 +1214,119 @@
       if (e.target === modal) closeSettingsScreen();
     });
 
-    modal.querySelectorAll(".ytm-tab-button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        activeTab = btn.dataset.tab;
-        modal.querySelectorAll(".ytm-tab-button").forEach((b) => b.classList.toggle("active", b === btn));
-        renderActiveContent();
+    const tabButtons = Array.from(modal.querySelectorAll(".ytm-tab-button"));
+    const selectTab = (btn, focus = false) => {
+      activeTab = btn.dataset.tab;
+      storeTab(activeTab);
+      tabButtons.forEach((b) => {
+        const selected = b === btn;
+        b.classList.toggle("active", selected);
+        b.setAttribute("aria-selected", String(selected));
+        b.tabIndex = selected ? 0 : -1;
+      });
+      if (focus) btn.focus();
+      const search = modal.querySelector("#ytm-settings-search");
+      if (search && searchQuery) {
+        search.value = "";
+        searchQuery = "";
+      }
+      renderActiveContent(false);
+    };
+    tabButtons.forEach((btn) => {
+      btn.setAttribute("aria-selected", String(btn.dataset.tab === activeTab));
+      btn.tabIndex = btn.dataset.tab === activeTab ? 0 : -1;
+      btn.addEventListener("click", () => selectTab(btn));
+      btn.addEventListener("keydown", (e) => {
+        const index = tabButtons.indexOf(btn);
+        const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+        if (step) {
+          e.preventDefault();
+          selectTab(tabButtons[(index + step + tabButtons.length) % tabButtons.length], true);
+        } else if (e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          selectTab(tabButtons[e.key === "Home" ? 0 : tabButtons.length - 1], true);
+        }
       });
     });
 
-    renderActiveContent();
+    const search = modal.querySelector("#ytm-settings-search");
+    search?.addEventListener("input", () => {
+      searchQuery = search.value.trim().toLowerCase();
+      renderActiveContent(false);
+    });
+    search?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && search.value) {
+        e.preventDefault();
+        e.stopPropagation();
+        search.value = "";
+        searchQuery = "";
+        renderActiveContent(false);
+      }
+    });
+
+    renderActiveContent(false);
   }
 
-  function renderActiveContent() {
+  const TAB_RENDERERS = {
+    general: (area) => renderGeneral(area),
+    lyrics: (area) => renderLyrics(area),
+    audio: (area) => renderAudio(area),
+    tweaks: (area) => renderTweaks(area),
+    scrobble: (area) => renderScrobble(area),
+    system: (area) => renderSystem(area),
+  };
+
+  function renderSearchResults(area) {
+    let matches = 0;
+    for (const tab of TABS) {
+      const section = document.createElement("section");
+      section.className = "ytm-search-section";
+      TAB_RENDERERS[tab](section);
+      const cards = Array.from(section.querySelectorAll(".ytm-settings-card"));
+      let visible = 0;
+      for (const card of cards) {
+        const hit = (card.textContent || "").toLowerCase().includes(searchQuery);
+        card.hidden = !hit;
+        if (hit) visible++;
+      }
+      if (!visible) continue;
+      matches += visible;
+      for (const child of Array.from(section.children)) {
+        if (child.tagName === "P") child.remove();
+      }
+      area.appendChild(section);
+    }
+    if (!matches) {
+      const empty = document.createElement("div");
+      empty.className = "ytm-search-empty";
+      empty.textContent = `No settings match "${searchQuery}".`;
+      area.appendChild(empty);
+    }
+  }
+
+  function renderActiveContent(preserveScroll = true) {
     const area = document.getElementById("ytm-modal-content-area");
     if (!area) return;
+    const scrollTop = preserveScroll ? area.scrollTop : 0;
+    const focusedKey = preserveScroll ? document.activeElement?.dataset?.key : null;
     area.textContent = "";
 
-    switch (activeTab) {
-      case "general": renderGeneral(area); break;
-      case "lyrics": renderLyrics(area); break;
-      case "audio": renderAudio(area); break;
-      case "tweaks": renderTweaks(area); break;
-      case "scrobble": renderScrobble(area); break;
-      case "system": renderSystem(area); break;
-      default: renderGeneral(area); break;
+    if (searchQuery) renderSearchResults(area);
+    else (TAB_RENDERERS[activeTab] || TAB_RENDERERS.general)(area);
+
+    area.scrollTop = scrollTop;
+    if (focusedKey && typeof CSS === "object" && CSS.escape) {
+      area.querySelector?.(`[data-key="${CSS.escape(focusedKey)}"]`)?.focus?.();
     }
   }
 
   function openSettingsScreen() {
     isOpen = true;
+    searchQuery = "";
     renderModal();
     const modal = document.getElementById(MODAL_ID);
     if (modal) modal.classList.add("open");
+    setTimeout(() => modal?.querySelector?.(".ytm-tab-button.active")?.focus?.(), 0);
   }
 
   function closeSettingsScreen() {
@@ -1163,6 +1341,7 @@
   }
 
   function dismissOnboarding() {
+    onboardedCache = true;
     try {
       localStorage.setItem(ONBOARDING_KEY, "true");
     } catch {}
@@ -1187,11 +1366,11 @@
   }
 
   function setupOnboarding(gearBtn) {
-    let onboarded = false;
+    if (onboardedCache) return;
     try {
-      onboarded = localStorage.getItem(ONBOARDING_KEY) === "true";
+      onboardedCache = localStorage.getItem(ONBOARDING_KEY) === "true";
     } catch {}
-    if (onboarded) return;
+    if (onboardedCache) return;
 
     gearBtn.classList.add("ytm-onboarding-target");
 
@@ -1230,6 +1409,8 @@
 
   function installHeaderElements() {
     injectStyles();
+    const existing = document.getElementById(HEADER_BTN_ID);
+    if (existing?.isConnected && onboardedCache) return;
 
     // Insert or acquire dedicated gear button in header
     const rightContent = document.querySelector("ytmusic-nav-bar #right-content, #nav-bar #right-content");
@@ -1269,8 +1450,16 @@
 
   // keyboard shortcuts
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && isOpen) {
+    if (e.key === "Escape" && isOpen && !document.getElementById("ytm-restart-dialog")) {
       closeSettingsScreen();
+    }
+    if (isOpen && (e.ctrlKey || e.metaKey) && !e.shiftKey && String(e.key).toLowerCase() === "f") {
+      const search = document.getElementById("ytm-settings-search");
+      if (search) {
+        e.preventDefault();
+        search.focus();
+        search.select?.();
+      }
     }
     if ((e.ctrlKey || e.metaKey) && e.key === ",") {
       e.preventDefault();
@@ -1285,8 +1474,15 @@
     }
   });
 
+  // throttled header install
+  let installScheduled = false;
   const observer = new MutationObserver(() => {
-    installHeaderElements();
+    if (installScheduled) return;
+    installScheduled = true;
+    setTimeout(() => {
+      installScheduled = false;
+      installHeaderElements();
+    }, 300);
   });
 
   const install = () => {

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### UI/UX Improvements
+
+- Added settings search across every tab (**Ctrl+F** while settings are open), a remembered last tab, arrow-key tab navigation, and visible focus rings.
+- Settings no longer jump back to the top or lose focus when a toggle changes.
+- Added **Ctrl+Wheel** zoom, **F5** reload, and numpad zoom keys.
+- Right-click now works inside text fields so paste is available again.
+- The settings header shows the real app version instead of a hardcoded one.
+
+### Fixes & Reliability
+
+- Fixed the window getting stuck when switching back from another app: in-app shortcuts no longer register and unregister system-wide hotkeys on every focus change, and they no longer steal Ctrl+R, Ctrl+0, and similar keys from other apps.
+- Fixed update status requests stalling every settings change for 15 seconds.
+- Slow lyrics and network requests no longer block settings toggles queued behind them.
+- Throttled the settings header watcher, which ran on every page mutation, to reduce jank.
+- Fixed the orphaned-overlay cleanup misjudging fixed-position dialogs, and it now also runs when the window regains focus.
+
+### Rust Migration
+
+- Moved LRCLib lookup, title cleanup, fuzzy matching, LRC parsing, and rate-limit backoff from the page into a native `lyrics` module.
+- Moved the YouTube Music lyrics fetch and timed-lyrics parsing into Rust.
+
 ## 0.2.5 - 2026-09-13
 
 ### Features

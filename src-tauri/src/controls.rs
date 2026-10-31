@@ -71,15 +71,6 @@ const VIDEO_TOGGLE_ID: &str = "feature_video_toggle";
 const AMBIENT_MODE_ID: &str = "feature_ambient_mode";
 const CROSSFADE_ID: &str = "feature_crossfade";
 const DEVTOOLS_ID: &str = "tools_devtools";
-const LOCAL_SHORTCUTS: [(&str, &str); 7] = [
-    ("Ctrl+R", RELOAD_ID),
-    ("Ctrl+=", ZOOM_IN_ID),
-    ("Ctrl+-", ZOOM_OUT_ID),
-    ("Ctrl+0", ZOOM_RESET_ID),
-    ("Ctrl+Shift+Delete", RESET_SESSION_ID),
-    ("F12", DEVTOOLS_ID),
-    ("Ctrl+Shift+I", DEVTOOLS_ID),
-];
 const MAX_NOW_PLAYING_CHARS: usize = 72;
 const MAX_TRAY_TOOLTIP_CHARS: usize = 120;
 
@@ -109,7 +100,6 @@ struct ShellUi {
 pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
     let initial = settings::snapshot(&state.settings);
     let shell = build_tray(app, &initial)?;
-    set_local_shortcuts(app.handle(), true, &state);
 
     for (shortcut, action) in [
         ("Ctrl+Alt+A", PREVIOUS_ID),
@@ -149,26 +139,6 @@ pub fn install(app: &mut App, state: AppState) -> tauri::Result<()> {
 
     app.manage(shell);
     Ok(())
-}
-
-pub fn set_local_shortcuts(app: &AppHandle, focused: bool, state: &AppState) {
-    for (shortcut, action) in LOCAL_SHORTCUTS {
-        if focused {
-            if app.global_shortcut().is_registered(shortcut) {
-                continue;
-            }
-            let state = state.clone();
-            let _ = app
-                .global_shortcut()
-                .on_shortcut(shortcut, move |app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        handle_local_shortcut(app, action, &state);
-                    }
-                });
-        } else if app.global_shortcut().is_registered(shortcut) {
-            let _ = app.global_shortcut().unregister(shortcut);
-        }
-    }
 }
 
 fn build_tray(app: &App, initial: &settings::Settings) -> tauri::Result<ShellUi> {
@@ -805,26 +775,6 @@ pub fn sync_tray_effects(app: &AppHandle, state: &AppState) {
         if let Some(it) = shell.feature_items.get(id) {
             let _ = it.set_checked(current_effect == val);
         }
-    }
-}
-
-fn handle_local_shortcut(app: &AppHandle, action: &str, state: &AppState) {
-    match action {
-        RELOAD_ID => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.reload();
-            }
-        }
-        ZOOM_IN_ID => set_zoom(app, state, 0.1),
-        ZOOM_OUT_ID => set_zoom(app, state, -0.1),
-        ZOOM_RESET_ID => reset_zoom(app, state),
-        RESET_SESSION_ID => reset_session(app, state),
-        DEVTOOLS_ID => {
-            if let Some(window) = app.get_webview_window("main") {
-                window.open_devtools();
-            }
-        }
-        _ => {}
     }
 }
 

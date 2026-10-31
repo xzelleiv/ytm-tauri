@@ -3,6 +3,7 @@
 mod adblock;
 mod controls;
 mod feature_bridge;
+mod lyrics;
 mod notifications;
 mod platform;
 mod presence;
@@ -143,13 +144,6 @@ pub fn run() {
                 .build(),
         )
         .on_window_event(move |window, event| match event {
-            WindowEvent::Focused(focused) if window.label() == "main" => {
-                controls::set_local_shortcuts(
-                    window.app_handle(),
-                    *focused,
-                    &state_for_window_events,
-                );
-            }
             WindowEvent::CloseRequested { api, .. }
                 if window.label() == "main"
                     && settings::snapshot(&state_for_window_events.settings).close_to_tray
@@ -375,6 +369,7 @@ pub fn page_feature_config(settings: &settings::Settings) -> String {
         "crossfade_seconds": settings.crossfade_seconds,
         "crossfade_curve": settings.crossfade_curve,
         "spotify_spoof": settings.spotify_spoof,
+        "app_version": env!("CARGO_PKG_VERSION"),
     })
     .to_string()
 }

@@ -182,3 +182,24 @@ test("updater status is read without starting an update", async () => {
   assert.equal(JSON.parse((await pending).body).stage, "downloading");
   assert.equal(context.document.title, "YouTube Music");
 });
+
+test("acknowledged slow requests free the bridge for queued settings", async () => {
+  const context = createRuntime();
+  const features = context.window.__ytmFeatures;
+  const lyrics = features.lyrics({ title: "Song", artist: "Artist" });
+  const lyricsRequest = JSON.parse(context.document.title.slice("YTMFEATURE:".length));
+  assert.equal(lyricsRequest.kind, "lyrics");
+  assert.equal(lyricsRequest.value.title, "Song");
+
+  const setting = features.setSetting("synced_lyrics", true);
+  features.ack(lyricsRequest.id);
+  context.runImmediateTimers();
+  const settingRequest = JSON.parse(context.document.title.slice("YTMFEATURE:".length));
+  assert.equal(settingRequest.kind, "set_setting");
+
+  features.receive(lyricsRequest.id, { ok: true, body: "{}" });
+  assert.equal(context.document.title.startsWith("YTMFEATURE:"), true);
+  features.receive(settingRequest.id, { ok: true });
+  await Promise.all([lyrics, setting]);
+  assert.equal(context.document.title, "YouTube Music");
+});

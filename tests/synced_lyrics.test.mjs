@@ -264,84 +264,43 @@ test("synced lyrics updates its active timing interval without restart", () => {
   plugin.stop();
 });
 
-test("parseRetryAfter handles integer seconds and HTTP Date strings with bounds", () => {
-  const { features } = createRuntime();
-  const plugin = features.get("synced_lyrics");
-  assert.equal(typeof plugin.parseRetryAfter, "function");
-
-  assert.equal(plugin.parseRetryAfter("120"), 120);
-  assert.equal(plugin.parseRetryAfter("10"), 10);
-  assert.equal(plugin.parseRetryAfter("1000"), 1000);
-  assert.equal(plugin.parseRetryAfter("100000"), 86400);
-  assert.equal(plugin.parseRetryAfter(null), 60);
-  assert.equal(plugin.parseRetryAfter("invalid"), 60);
-
-  const future = new Date(Date.now() + 45000).toUTCString();
-  const diff = plugin.parseRetryAfter(future);
-  assert.ok(diff >= 40 && diff <= 50);
-});
-
-test("fetchLrcLib honors 429 Retry-After and suppresses subsequent calls", async () => {
-  let fetchAttempts = 0;
+test("fetchLrcLib delegates lookup to the native lyrics bridge", async () => {
   const { context, features } = createRuntime();
   const plugin = features.get("synced_lyrics");
-
-  context.fetch = async () => {
-    fetchAttempts++;
+  const calls = [];
+  context.window.__ytmFeatures.lyrics = async (track) => {
+    calls.push(track);
     return {
-      status: 429,
-      ok: false,
-      headers: {
-        get(key) {
-          return key.toLowerCase() === "retry-after" ? "60" : null;
-        },
-      },
+      ok: true,
+      body: JSON.stringify({ title: "Song", artists: ["Artist"], lines: [{ time: "00:01.00", timeInMs: 1000, duration: 3000, text: "Hi", words: [] }], lyrics: null }),
     };
   };
 
-  const res1 = await plugin.fetchLrcLib({ title: "Song One", artist: "Artist One" }, 0);
-  assert.equal(res1, null);
-  assert.equal(fetchAttempts, 1);
+  const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist", album: "Album", songDuration: 181.4 }, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ title: "Song", artist: "Artist", album: "Album", duration: 181.4 }]);
+  assert.equal(res.lines[0].text, "Hi");
+});
 
-  // Subsequent call during cooldown should be suppressed without network fetch
-  const res2 = await plugin.fetchLrcLib({ title: "Song Two", artist: "Artist Two" }, 0);
-  assert.equal(res2, null);
-  assert.equal(fetchAttempts, 1);
+test("fetchLrcLib returns null when the native lookup finds nothing", async () => {
+  const { context, features } = createRuntime();
+  const plugin = features.get("synced_lyrics");
+  context.window.__ytmFeatures.lyrics = async () => ({ ok: true });
+  assert.equal(await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 0), null);
 });
 
 test("fetchLrcLib aborts execution when track epoch changes", async () => {
   const { context, features } = createRuntime();
   const plugin = features.get("synced_lyrics");
+  let called = false;
+  context.window.__ytmFeatures.lyrics = async () => {
+    called = true;
+    return null;
+  };
 
   // If epoch passed does not match currentTrackEpoch (which is initialized to 0), it aborts immediately
   const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 999);
   assert.equal(res, null);
-});
-
-test("parseLrc parses flexible timestamps and strips inline section headers", () => {
-  const { features } = createRuntime();
-  const plugin = features.get("synced_lyrics");
-  assert.equal(typeof plugin.parseLrc, "function");
-
-  const lrc = [
-    "[re:LRCLIB]",
-    "[00:10,50][Verse 1] Comma decimal",
-    "[00:20.123][Chorus] Three digit millis",
-    "[00:30] Integer seconds",
-    "[00:40:50] Colon subseconds",
-  ].join("\n");
-
-  const parsed = plugin.parseLrc(lrc);
-  assert.equal(parsed.lines.length, 5);
-  assert.equal(parsed.lines[1].timeInMs, 10500);
-  assert.equal(parsed.lines[1].text, "Comma decimal");
-  assert.equal(parsed.lines[2].timeInMs, 20123);
-  assert.equal(parsed.lines[2].text, "Three digit millis");
-  assert.equal(parsed.lines[3].timeInMs, 30000);
-  assert.equal(parsed.lines[3].text, "Integer seconds");
-  assert.equal(parsed.lines[4].timeInMs, 40500);
-  assert.equal(parsed.lines[4].text, "Colon subseconds");
-  assert.equal(parsed.lines[4].duration, 3000);
+  assert.equal(called, false);
 });
 
 test("renderPlain sanitizes metadata headers and leading timestamps", () => {
@@ -368,13 +327,12 @@ test("renderPlain sanitizes metadata headers and leading timestamps", () => {
 });
 
 test("fetchLrcLib aborts immediately when signal is aborted", async () => {
-  let fetchCalled = false;
+  let called = false;
   const { context, features } = createRuntime();
   const plugin = features.get("synced_lyrics");
-
-  context.fetch = async () => {
-    fetchCalled = true;
-    return { ok: false };
+  context.window.__ytmFeatures.lyrics = async () => {
+    called = true;
+    return null;
   };
 
   const controller = new context.AbortController();
@@ -382,15 +340,7 @@ test("fetchLrcLib aborts immediately when signal is aborted", async () => {
 
   const res = await plugin.fetchLrcLib({ title: "Song", artist: "Artist" }, 0, controller.signal);
   assert.equal(res, null);
-  assert.equal(fetchCalled, false);
-});
-
-test("LRCLIB candidate matching rejects a different duration/version", () => {
-  const { features } = createRuntime();
-  const plugin = features.get("synced_lyrics");
-  const info = { title: "Song", artist: "Artist", songDuration: 180 };
-  assert.ok(plugin.scoreCandidate("Artist", "Song", 181, info) > 0);
-  assert.equal(plugin.scoreCandidate("Artist", "Song", 190, info), -1);
+  assert.equal(called, false);
 });
 
 test("lyrics effects apply dataset attribute for all 7 presets", () => {

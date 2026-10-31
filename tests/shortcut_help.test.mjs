@@ -93,7 +93,7 @@ function createRuntime(hostname = "music.youtube.com") {
     documentElement: null,
     listeners: new Map(),
     addEventListener(type, listener) {
-      document.listeners.set(type, listener);
+      document.listeners.set(type, [...(document.listeners.get(type) || []), listener]);
     },
     getElementById(id) {
       return document.body.find((child) => child.id === id) || document.head.find((child) => child.id === id);
@@ -105,14 +105,21 @@ function createRuntime(hostname = "music.youtube.com") {
   const focusAnchor = new FakeElement("button", document);
   document.body.appendChild(focusAnchor);
   document.activeElement = focusAnchor;
+  const actions = [];
   const context = {
     document,
     location: { hostname },
     window: null,
+    __ytmFeatures: {
+      triggerAction(action) {
+        actions.push(action);
+        return Promise.resolve({ ok: true });
+      },
+    },
   };
   context.window = context;
   vm.runInNewContext(source, context);
-  return { context, document, focusAnchor };
+  return { context, document, focusAnchor, actions };
 }
 
 function keydown(document, target, key, modifiers = {}) {
@@ -129,7 +136,10 @@ function keydown(document, target, key, modifiers = {}) {
     stopPropagation() { stopped = true; },
     ...modifiers,
   };
-  document.listeners.get("keydown")(event);
+  for (const listener of document.listeners.get("keydown") || []) {
+    listener(event);
+    if (stopped) break;
+  }
   return { prevented, stopped };
 }
 
@@ -142,8 +152,8 @@ test("shortcut help only installs on the exact YouTube Music host", () => {
 test("shortcut list mirrors native media and local controls", () => {
   const { context } = createRuntime();
   assert.deepEqual([...context.window.__ytmShortcutHelp.list()].map(({ key }) => key), [
-    "Ctrl+Alt+A", "Ctrl+Alt+S", "Ctrl+Alt+D", "Ctrl+R", "Ctrl+=", "Ctrl+-",
-    "Ctrl+0", "Ctrl+Shift+Delete", "F12", "Ctrl+Shift+I", "Ctrl+H",
+    "Ctrl+Alt+A", "Ctrl+Alt+S", "Ctrl+Alt+D", "Ctrl+R / F5", "Ctrl+=", "Ctrl+-",
+    "Ctrl+0", "Ctrl+Wheel", "Ctrl+Shift+Delete", "F12", "Ctrl+Shift+I", "Ctrl+H",
   ]);
 });
 
@@ -160,7 +170,7 @@ test("Ctrl+H opens an accessible dialog and restores focus on close", () => {
   keydown(document, document.activeElement, "Escape");
   assert.equal(document.body.find((child) => child.id === "ytm-shortcut-help"), null);
   assert.equal(document.activeElement, focusAnchor);
-  assert.equal(context.window.__ytmShortcutHelp.list().length, 11);
+  assert.equal(context.window.__ytmShortcutHelp.list().length, 12);
 });
 
 test("shortcut help does not intercept typing and closes on backdrop click", () => {
@@ -176,4 +186,25 @@ test("shortcut help does not intercept typing and closes on backdrop click", () 
   overlay.dispatchEvent("click");
   assert.equal(document.body.find((child) => child.id === "ytm-shortcut-help"), null);
   assert.equal(document.activeElement, focusAnchor);
+});
+
+test("app shortcuts run native actions from the page instead of global hotkeys", () => {
+  const { document, focusAnchor, actions } = createRuntime();
+  assert.deepEqual(keydown(document, focusAnchor, "r", { ctrlKey: true }), { prevented: true, stopped: true });
+  keydown(document, focusAnchor, "F5");
+  keydown(document, focusAnchor, "=", { ctrlKey: true, code: "Equal" });
+  keydown(document, focusAnchor, "-", { ctrlKey: true, code: "Minus" });
+  keydown(document, focusAnchor, "0", { ctrlKey: true, code: "Digit0" });
+  keydown(document, focusAnchor, "F12");
+  keydown(document, focusAnchor, "I", { ctrlKey: true, shiftKey: true });
+  keydown(document, focusAnchor, "r", { ctrlKey: true, repeat: true });
+  assert.deepEqual(actions, ["reload", "reload", "zoom_in", "zoom_out", "zoom_reset", "open_devtools", "open_devtools"]);
+});
+
+test("app shortcuts still work while typing but plain keys pass through", () => {
+  const { document, actions } = createRuntime();
+  const input = document.createElement("input");
+  assert.deepEqual(keydown(document, input, "r"), { prevented: false, stopped: false });
+  keydown(document, input, "0", { ctrlKey: true, code: "Digit0" });
+  assert.deepEqual(actions, ["zoom_reset"]);
 });

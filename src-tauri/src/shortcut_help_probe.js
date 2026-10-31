@@ -8,10 +8,11 @@
     ["Ctrl+Alt+A", "Previous track"],
     ["Ctrl+Alt+S", "Play or pause"],
     ["Ctrl+Alt+D", "Next track"],
-    ["Ctrl+R", "Reload YouTube Music"],
+    ["Ctrl+R / F5", "Reload YouTube Music"],
     ["Ctrl+=", "Zoom in"],
     ["Ctrl+-", "Zoom out"],
     ["Ctrl+0", "Reset zoom"],
+    ["Ctrl+Wheel", "Zoom with the mouse wheel"],
     ["Ctrl+Shift+Delete", "Reset the YouTube Music session"],
     ["F12", "Open developer tools"],
     ["Ctrl+Shift+I", "Open developer tools"],
@@ -113,6 +114,53 @@
       show();
     }
   }
+
+  function appAction(event) {
+    const code = String(event.code || "");
+    const key = String(event.key || "").toLowerCase();
+    const bare = !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey;
+    if (key === "f12" && bare) return "open_devtools";
+    if (key === "f5" && bare) return "reload";
+    if (!event.ctrlKey || event.altKey || event.metaKey) return null;
+    if (event.shiftKey) {
+      if (key === "i") return "open_devtools";
+      if (key === "delete") return "reset_session";
+      if (key === "+" || code === "Equal") return "zoom_in";
+      return null;
+    }
+    if (key === "r" || key === "f5") return "reload";
+    if (key === "=" || key === "+" || code === "Equal" || code === "NumpadAdd") return "zoom_in";
+    if (key === "-" || code === "Minus" || code === "NumpadSubtract") return "zoom_out";
+    if (key === "0" || code === "Digit0" || code === "Numpad0") return "zoom_reset";
+    return null;
+  }
+
+  const ZOOM_ACTIONS = new Set(["zoom_in", "zoom_out", "zoom_reset"]);
+
+  function runAppAction(action) {
+    window.__ytmFeatures?.triggerAction?.(action)?.catch?.(() => {});
+  }
+
+  const onAppShortcut = (event) => {
+    const action = appAction(event);
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat && !ZOOM_ACTIONS.has(action)) return;
+    runAppAction(action);
+  };
+  document.addEventListener("keydown", onAppShortcut, true);
+
+  let wheelZoomAt = 0;
+  const onWheel = (event) => {
+    if (!event.ctrlKey || !event.deltaY) return;
+    event.preventDefault();
+    const now = Date.now();
+    if (now - wheelZoomAt < 120) return;
+    wheelZoomAt = now;
+    runAppAction(event.deltaY < 0 ? "zoom_in" : "zoom_out");
+  };
+  window.addEventListener?.("wheel", onWheel, { capture: true, passive: false });
 
   const onKeyDown = (event) => {
     if (event.defaultPrevented || isTextEntry(event.target)) return;

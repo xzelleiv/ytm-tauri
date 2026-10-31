@@ -1,4 +1,4 @@
-use crate::{controls, settings, updates, AppState};
+use crate::{controls, lyrics, settings, updates, AppState};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, io::Read, thread, time::Duration};
 use tauri::{Manager, Url, WebviewWindow};
@@ -133,14 +133,45 @@ pub fn handle_title(window: &WebviewWindow, title: &str, state: &AppState) {
             send_response(window, request.id, &response);
         }
         "http" => {
+            send_ack(window, request.id);
             let window = window.clone();
             thread::spawn(move || {
                 let response = execute_request(&request);
                 send_response(&window, request.id, &response);
             });
         }
+        "lyrics" => {
+            send_ack(window, request.id);
+            let query = request
+                .value
+                .clone()
+                .and_then(|value| serde_json::from_value::<lyrics::TrackQuery>(value).ok())
+                .unwrap_or_default();
+            let window = window.clone();
+            thread::spawn(move || {
+                let response = match lyrics::lookup(&query) {
+                    Ok(result) => FeatureResponse {
+                        ok: true,
+                        status: Some(200),
+                        body: result.and_then(|result| serde_json::to_string(&result).ok()),
+                        headers: HashMap::new(),
+                        settings: None,
+                        error: None,
+                    },
+                    Err(error) => error_response(error),
+                };
+                send_response(&window, request.id, &response);
+            });
+        }
         _ => {}
     }
+}
+
+// frees title channel
+fn send_ack(window: &WebviewWindow, id: u64) {
+    let _ = window.eval(format!(
+        "try {{ window.__ytmFeatures?.ack?.({id}); }} catch (e) {{ console.error(e); }}"
+    ));
 }
 
 fn send_response(window: &WebviewWindow, id: u64, response: &FeatureResponse) {
@@ -192,6 +223,9 @@ fn handle_action(window: &WebviewWindow, action: &str, state: &AppState) -> Resu
             if let Ok(mut value) = state.settings.lock() {
                 value.listenbrainz_token = None;
             }
+        }
+        "reload" => {
+            window.reload().map_err(|error| error.to_string())?;
         }
         "zoom_in" => {
             controls::set_zoom(app, state, 0.1);
@@ -479,9 +513,20 @@ fn parse_request(title: &str) -> Option<FeatureRequest> {
     let request: FeatureRequest = serde_json::from_str(raw).ok()?;
 
     match request.kind.as_str() {
-        "get_settings" => Some(request),
+        "get_settings" | "get_update_status" => Some(request),
         "set_setting" => {
             if request.key.is_some() && request.value.is_some() {
+                Some(request)
+            } else {
+                None
+            }
+        }
+        "lyrics" => {
+            if request
+                .value
+                .as_ref()
+                .is_some_and(serde_json::Value::is_object)
+            {
                 Some(request)
             } else {
                 None
@@ -686,6 +731,13 @@ mod tests {
         let parsed = parse_request(set).expect("set setting");
         assert_eq!(parsed.kind, "set_setting");
         assert_eq!(parsed.key.as_deref(), Some("synced_lyrics"));
+    }
+
+    #[test]
+    fn bridge_accepts_update_status_requests() {
+        let request = r#"YTMFEATURE:{"id":4,"kind":"get_update_status"}"#;
+        let parsed = parse_request(request).expect("update status");
+        assert_eq!(parsed.kind, "get_update_status");
     }
 
     #[test]
