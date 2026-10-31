@@ -176,6 +176,7 @@ pub fn run() {
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(blank_url))
                 .title("YouTube Music")
                 .theme(Some(Theme::Dark))
+                .background_color(tauri::window::Color(3, 3, 3, 255))
                 .inner_size(1280.0, 840.0)
                 .min_inner_size(900.0, 620.0)
                 .center()
