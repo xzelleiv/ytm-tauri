@@ -257,6 +257,20 @@ pub fn is_auth_intermediate_url(url: &Url) -> bool {
             .is_some_and(|q| q.contains("action_handle_signin=true"))
 }
 
+pub fn is_youtube_landing_url(url: &Url) -> bool {
+    if url.scheme() != "https" {
+        return false;
+    }
+    if !matches!(
+        url.host_str(),
+        Some("www.youtube.com" | "youtube.com" | "m.youtube.com")
+    ) {
+        return false;
+    }
+    let path = url.path();
+    path.is_empty() || path == "/" || path == "/index" || path.starts_with("/feed/")
+}
+
 pub fn is_auth_recovery_url(url: &Url) -> bool {
     if url.scheme() != "https" {
         return false;
@@ -370,6 +384,26 @@ mod tests {
 
     fn parse_url(value: &str) -> Url {
         Url::parse(value).expect("test URL must parse")
+    }
+
+    #[test]
+    fn youtube_home_after_sign_in_is_a_landing_url() {
+        assert!(is_youtube_landing_url(&parse_url(
+            "https://www.youtube.com/"
+        )));
+        assert!(is_youtube_landing_url(&parse_url(
+            "https://www.youtube.com/feed/you"
+        )));
+        assert!(is_youtube_landing_url(&parse_url("https://m.youtube.com/")));
+        assert!(!is_youtube_landing_url(&parse_url(
+            "https://music.youtube.com/"
+        )));
+        assert!(!is_youtube_landing_url(&parse_url(
+            "https://www.youtube.com/signin?action_handle_signin=true"
+        )));
+        assert!(!is_youtube_landing_url(&parse_url(
+            "https://accounts.google.com/"
+        )));
     }
 
     #[test]

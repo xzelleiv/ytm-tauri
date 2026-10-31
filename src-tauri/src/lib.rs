@@ -171,6 +171,7 @@ pub fn run() {
                 .expect("static about:blank URL must be valid");
             let app_for_new_window = app.handle().clone();
             let app_for_navigation = app.handle().clone();
+            let app_for_landing = app.handle().clone();
 
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(blank_url))
                 .title("YouTube Music")
@@ -183,6 +184,14 @@ pub fn run() {
                 .user_agent(DESKTOP_USER_AGENT)
                 .initialization_script(initialization_script(&initial))
                 .on_navigation(move |url| {
+                    if url_policy::is_youtube_landing_url(url) {
+                        if let Some(window) = app_for_landing.get_webview_window("main") {
+                            if let Ok(target) = Url::parse(YOUTUBE_MUSIC_URL) {
+                                let _ = window.navigate(target);
+                            }
+                        }
+                        return false;
+                    }
                     if url_policy::is_auth_recovery_url(url) {
                         static LAST_RECOVERY: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(0);
