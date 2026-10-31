@@ -24,6 +24,8 @@ const BUNDLED_CLIENT_ID: &str = include_str!("../discord-client-id.txt");
 const SPOTIFY_ICON_URL: &str =
     "https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_White.png";
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
+const COALESCE_WINDOW: Duration = Duration::from_millis(350);
+const MAX_COALESCED_COMMANDS: usize = 32;
 
 #[derive(Clone)]
 pub struct PresenceController {
@@ -81,7 +83,18 @@ impl PresenceController {
                 sync_status(&state, &status_for_worker);
 
                 match rx.recv_timeout(RECONNECT_INTERVAL) {
-                    Ok(command) => update_presence_state(&mut state, command),
+                    Ok(command) => {
+                        let mut commands = vec![command];
+                        while commands.len() < MAX_COALESCED_COMMANDS {
+                            match rx.recv_timeout(COALESCE_WINDOW) {
+                                Ok(next) => commands.push(next),
+                                Err(_) => break,
+                            }
+                        }
+                        for command in coalesce_commands(commands) {
+                            update_presence_state(&mut state, command);
+                        }
+                    }
                     Err(RecvTimeoutError::Timeout) => retry_presence_connection(&mut state),
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
@@ -134,6 +147,20 @@ impl PresenceController {
             "Connected: idle".to_string()
         }
     }
+}
+
+// keep latest message
+fn coalesce_commands(commands: Vec<PresenceCommand>) -> Vec<PresenceCommand> {
+    let mut latest_message = None;
+    let mut settings = Vec::new();
+    for command in commands {
+        match command {
+            PresenceCommand::Message(message) => latest_message = Some(message),
+            other => settings.push(other),
+        }
+    }
+    settings.extend(latest_message.map(PresenceCommand::Message));
+    settings
 }
 
 fn sync_status(state: &PresenceState, status: &Arc<Mutex<PresenceStatus>>) {
@@ -656,6 +683,35 @@ mod tests {
         update_presence_state(&mut state, PresenceCommand::SetEnabled(true));
 
         assert_eq!(state.published_track.as_ref(), Some(&track));
+    }
+
+    #[test]
+    fn rapid_track_changes_publish_only_the_latest() {
+        let track = |title: &str| TrackMetadata {
+            title: title.to_string(),
+            artist: None,
+            album: None,
+            playing: true,
+            url: None,
+            cover_url: None,
+            elapsed_seconds: None,
+            duration_seconds: None,
+        };
+        let commands = coalesce_commands(vec![
+            PresenceCommand::Message(PresenceMessage::Track(track("One"))),
+            PresenceCommand::SetSpotifySpoof(true),
+            PresenceCommand::Message(PresenceMessage::Track(track("Two"))),
+            PresenceCommand::Message(PresenceMessage::Track(track("Three"))),
+        ]);
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            commands[0],
+            PresenceCommand::SetSpotifySpoof(true)
+        ));
+        assert!(matches!(
+            &commands[1],
+            PresenceCommand::Message(PresenceMessage::Track(track)) if track.title == "Three"
+        ));
     }
 
     #[test]
